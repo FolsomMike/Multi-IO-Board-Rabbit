@@ -1,14 +1,18 @@
 /*******************************************************************
 
-	Capulin Control Board.c
-  	Mike Schoonover 2009
+	Multi_IO_A_Transverse.c
+  	Mike Schoonover 2015
 
 	This program is used with RCM4000 series controllers.
+
 	Description
 	===========
 
-   This is the software for the Capulin Series Control boards.
+   This is the software for the Multi-IO Series Transverse boards.
 
+   There are two different types of Transverse boards: Ring 1 & Ring 2.
+
+   Set RING constant to 1 or 2 to compile for either version.
 
 	Instructions
 	============
@@ -138,6 +142,15 @@
 
 //this "use" statement must be below the BU_TEMP_USE_xxx statement
 #use "board_update.lib"
+
+//this is the roll call query string expected from the host computer
+
+#define ROLL_CALL_QUERY "Device Query"
+
+//this is the response to the host computer's roll call -- it is used to
+//identify the board type
+
+#define ROLL_CALL_RESPONSE "Transverse Ring 1 Multi-IO Board A"
 
 // Control Flags Bit Defines (controlFlags)
 // The control register flags are set by the host to control functions of
@@ -2550,7 +2563,6 @@ void setupTimerBInt()
 void initRegisters()
 {
 
-   // setup for auxiliary I/O bus  0x09c -> SPCR
    // bit  7   = 1   - Ignore the SMODE pins program fetch function
    // bits 6:5 = 00  - Read only, states of SMODE pins, write with 0
    // bits 4:2 = 000 - Disable auxiliary I/O bus, Port A and Port B are I/O
@@ -2765,7 +2777,7 @@ waitForHost()
          printf("Received: %s\n", buffer);
 
            //if the roll call is not meant for this board, keep waiting
-           if(_n_strcmp("Control Board Roll Call", buffer) != 0) status = 0;
+           if(_n_strcmp(ROLL_CALL_QUERY, buffer) != 0) status = 0;
 
          //display the sender's IP address in decimal format
          inet_ntoa(buffer, datagramInfo.remip);
@@ -2778,7 +2790,7 @@ waitForHost()
 
    //send a return packet so the host can know the board's IP
    printf("Sending response...\n");
-   sprintf(buffer, "Control board present, Ver %s...", VERSION);
+   sprintf(buffer, "%s, Ver %s...", ROLL_CALL_RESPONSE, VERSION);
 
 
    //When the socket is first opened, it is not tied to the host IP because it
@@ -3024,15 +3036,13 @@ main()
    // Start network and wait for interface to come up (or error exit).
    sock_init_or_exit(1);
 
-   //Because the UT boards cannot read the chassis and board address switches until
-   //the FPGA is loaded from the host, they use the MAC address to derive an IP
-   //address.  Each board is supposed to have a unique MAC stored in it by the
-   //manufacturer - use the bottom two bytes of the MAC as the bottom two bytes
-   //of the IP which will make it very unlikely that any two boards in a system
-   //have the same IP
-   //The Control boards use the same method as the UT boards for connecting with
-   //the host for the sake of consistency even though the Control boards can
-   //read the address switches on startup.
+  	// To avoid having to manually register each device's IP in the host computer,
+   // they use the MAC address to derive an IP address. The host then collects
+   // these IP addresses using a UDP broadcast/response to all listening
+   // devices.  Each board is supposed to have a unique MAC stored in it by the
+   // manufacturer - use the bottom two bytes of the MAC as the bottom two bytes
+   // of the IP which will make it very unlikely that any two boards in a system
+   // have the same IP.
 
    pd_getaddress(0, MACbuffer);
    printf("Link Address: %02x%02x:%02x%02x:%02x%02x\n", MACbuffer[0],
@@ -3065,7 +3075,7 @@ main()
    printf("Changing local IP address to: %s\n", buffer);
 
    // setup all registers and I/O ports
-   initRegisters();
+//debug mks   initRegisters();
 
    // setup the Timber B interrupt and install the Interrupt Service Routine
    // to track the encoder inputs
