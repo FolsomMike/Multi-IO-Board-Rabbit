@@ -2884,6 +2884,33 @@ void waitForHostViaUDP()
 }//end of waitForHostViaUDP
 //----------------------------------------------------------------------------
 
+//----------------------------------------------------------------------------
+// waitForHostTCPIPConnection
+//
+// Waits for the host computer to make a TCP/IP connection. Sends a greeting
+// back to the host after the connection is established.
+//
+
+void waitForHostTCPIPConnection(tcp_Socket *socket)
+{
+
+	const char * const greeting = "Hello from Control Board!\n";
+	const int greetingLength = 26;
+
+   tcp_listen(socket,PORT,0,0,NULL,0);
+
+   printf("Waiting for connection...\n");
+   while(!sock_established(socket) && sock_bytesready(socket)==-1)
+      tcp_tick(socket);
+
+   printf("Connection received...\n");
+
+   sock_flushnext(socket);
+   sock_write(socket, greeting, greetingLength);
+
+}//end of waitForHostTCPIPConnection
+//----------------------------------------------------------------------------
+
 //-----------------------------------------------------------------------------
 // reSync
 //
@@ -3056,9 +3083,6 @@ int processDataPackets(tcp_Socket *socket, int pWaitForPkt)
 //
 //
 
-	const char * const greeting = "Hello from Control Board!\n";
-	const int greetingLength = 26;
-
 main()
 {
 
@@ -3100,26 +3124,7 @@ main()
       //wait for the host computer to broadcast the roll call via UDP
       waitForHostViaUDP();
 
-      tcp_listen(&socket,PORT,0,0,NULL,0);
-
-      printf("Waiting for connection...\n");
-      while(!sock_established(&socket) && sock_bytesready(&socket)==-1)
-         tcp_tick(&socket);
-
-      printf("Connection received...\n");
-
-      sock_flushnext(&socket);
-      sock_write(&socket, greeting, greetingLength);
-
-      //read the board's chassis and slot address from PortB which is connected
-      //to the rotary switches on the motherboard
-
-      slotAddr = ~(RdPortI(PBDR) | 0xfff0);
-      printf("Board Address: %6d\n", slotAddr);
-
-      // board number is upper nibble of Port D inputs
-      chassisAddr = ~((RdPortI(PBDR) >> 4) | 0xfff0 );
-      printf("Chassis Address: %6d\n", chassisAddr);
+      waitForHostTCPIPConnection(&socket);
 
       printf("Waiting for command...\n");
 
