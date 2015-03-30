@@ -12,7 +12,8 @@
 
    There are two different types of Transverse boards: Ring 1 & Ring 2.
 
-   Set RING constant to 1 or 2 to compile for either version.
+   Comment out one or the other of the two ROLL_CALL_RESPONSE defines to
+   choose between Ring 1 and Ring 2.
 
 	Instructions
 	============
@@ -82,6 +83,15 @@
 
 #class auto
 
+//Change this number when the code is changed.
+#define VERSION "1.0"
+
+//this is the response to the host computer's roll call -- it is used to
+//identify the board type
+
+#define ROLL_CALL_RESPONSE "Transverse Ring 1 Multi-IO Board A"
+//#define ROLL_CALL_RESPONSE "Transverse Ring 2 Multi-IO Board A"
+
 #use RCM42xx.LIB
 
 // Possible options for temporarily storing software update images.  Using
@@ -106,11 +116,6 @@
 //this is the roll call query string expected from the host computer
 
 #define ROLL_CALL_QUERY "Device Query"
-
-//this is the response to the host computer's roll call -- it is used to
-//identify the board type
-
-#define ROLL_CALL_RESPONSE "Transverse Ring 1 Multi-IO Board A"
 
 // Control Flags Bit Defines (controlFlags)
 // The control register flags are set by the host to control functions of
@@ -192,8 +197,13 @@
 
 #use "dcrtcp.lib"  //tcpip library
 
-//Change this number when the code is changed.
-#define VERSION "1.0"
+// Serial Port Defines and library usage
+
+//circular buffer sizes
+#define DINBUFSIZE 255
+#define DOUTBUFSIZE 255
+
+#use "RS232.lib"
 
 //firmware code upload buffer size is 1024 data bytes plus one command byte
 #define CODE_BUFFER_SIZE 1025
@@ -270,7 +280,8 @@ char pktID;
 
 int reSynced, reSyncCount, reSyncPktID;
 
-int pktError; //wrong size, checksum error, execution error
+int pktError; //ethernet : wrong size, checksum error, execution error
+int spDError; //serial port D : wrong size, checksum error, execution error
 
 unsigned timerb_match; // match value
 long timerBCount; //incremented with each timerb interrupt
@@ -2525,7 +2536,8 @@ setupEthernet()
    // have the same IP.
 
    pd_getaddress(0, MACbuffer);
-   printf("Link Address: %02x%02x:%02x%02x:%02x%02x\n", MACbuffer[0],
+	printf("\n");
+   printf("MAC Address: %02x%02x:%02x%02x:%02x%02x\n", MACbuffer[0],
          MACbuffer[1], MACbuffer[2], MACbuffer[3], MACbuffer[4], MACbuffer[5]);
 
 
@@ -2555,6 +2567,60 @@ setupEthernet()
    printf("Changing local IP address to: %s\n", buffer);
 
 }//end of setupEthernet
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// setupSerialPortD
+//
+// Prepares serial port D for communication with the master PIC chip.
+//
+// Ports used:
+// PC0: transmit
+// PC1: receive
+//
+// NOTE: if PC1 input is floating because it is not connected to a driver or
+// the PIC chip's out port has not yet been configured as an output, noise on
+// the line will place random data in the receive buffer. This function will
+// then log that there is data in the receive buffer.
+//
+
+void setupSerialPortD()
+{
+
+	int status, numBytes;
+
+   printf("\n");
+
+   status = serDopen(57600);
+	printf( "Serial port opened status: %d...\n", status);
+
+   if(status == 1){
+		printf("  (The Rabbit's bps setting is within 5%%");
+		printf(" of the input baud.)\n");
+   }else if (status == 0){
+		printf("  (The Rabbit's bps setting differs by more than 5%%");
+      printf(" of the input baud.)\n");
+   }else{
+		printf("  (unknown status value returned)");
+   }
+
+   serXrdFlush(SER_PORT_D); serXwrFlush(SER_PORT_D);
+
+   numBytes = serXrdFree(SER_PORT_D);
+	printf( "Read buffer bytes free: %d...\n", numBytes);
+
+   numBytes = serXrdUsed(SER_PORT_D);
+	printf( "Read buffer bytes used: %d...\n", numBytes);
+
+   numBytes = serXwrFree(SER_PORT_D);
+	printf( "Write buffer bytes free: %d...\n", numBytes);
+
+   numBytes = serXwrUsed(SER_PORT_D);
+	printf( "Write buffer bytes used: %d...\n", numBytes);
+
+   serXdatabits(SER_PORT_D, PARAM_8BIT); //8 bit mode
+
+}//end of setupSerialPortD
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -2601,6 +2667,8 @@ void waitForHostViaUDP()
 
    udp_Socket socket;
 
+	printf("\n");
+
    printf("Waiting for roll call from host...\n");
 
    //use local port 4446, use 230.0.0.1 for remote IP - this is a reserved IP
@@ -2609,7 +2677,7 @@ void waitForHostViaUDP()
 
    status = udp_open(&socket, 4446, resolve("230.0.0.1"), 4445, NULL);
 
-   printf("Socket status : %d\n", status);
+   printf("Ethernet socket status : %d\n", status);
 
    //listen for roll call packets
 
@@ -2708,6 +2776,53 @@ void waitForHostTCPIPConnection(tcp_Socket *socket)
 //----------------------------------------------------------------------------
 
 //-----------------------------------------------------------------------------
+// processSerialPortDData
+//
+// This function should be called often to allow processing of data packets
+// received from Serial Port D and stored in the socket buffer.
+//
+// On the Multi-IO boards, Serial Port D is the link to the master PIC chip.
+//
+// All packets received from should begin with 0xaa, 0x55, 0xbb, 0x66, followed
+// by the packet identifier/command.  This is followed by the packet data and
+// a checksum which includes all packet data and the packet identifier/command.
+// When the packet data and packet identifier are added to the checksum, the
+//  result should be zero.
+//
+// If pWaitForPkt is true, the function will wait until data is available.
+//
+// Returns number of bytes retrieved from the port, not including the
+// 4 header bytes and the packet ID. Thus, if a non-zero value is returned, a
+// packet was processed.  If zero is returned, some bytes may have been read
+// but a packet was not successfully processed due to missing bytes or header
+// corruption.  Some functions simply return 1 if the number of bytes read
+// is inconsequential.
+//
+// If the function returns -1, then some bytes may have been read but a
+// complete packet and command were not read and executed fully.  It is
+// expected that the next call will result in a reSync to clean up any leftover
+// bytes.
+//
+// It is up to the target function to perform an optional verification of the
+// checksum.
+//
+
+int processSerialPortDData(int pWaitForPkt)
+{
+
+	int numBytes;
+
+   //wait for a packet if parameter is true
+   if (pWaitForPkt){while(serXrdUsed(SER_PORT_D) < 5){}}
+
+   //wait until 5 bytes are available - this should be the 4 header bytes, and
+   //the packet identifier/command
+   if ((numBytes = serXrdUsed(SER_PORT_D)) < 5) return 0;
+
+}//end of processSerialPortDData
+//-----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
 // reSync
 //
 // Clears bytes from the socket buffer until 0xaa byte reached which signals
@@ -2746,7 +2861,7 @@ void reSync(tcp_Socket *socket)
 //-----------------------------------------------------------------------------
 
 //-----------------------------------------------------------------------------
-// processDataPackets
+// processEthernetData
 //
 // This function should be called often to allow processing of data packets
 // received from the remotes and stored in the socket buffer.
@@ -2775,7 +2890,7 @@ void reSync(tcp_Socket *socket)
 // of the checksum.
 //
 
-int processDataPackets(tcp_Socket *socket, int pWaitForPkt)
+int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
 {
 
    int bytes_read;
@@ -2868,7 +2983,7 @@ int processDataPackets(tcp_Socket *socket, int pWaitForPkt)
 
    return 0;
 
-}//end of processDataPackets
+}//end of processEthernetData
 //-----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -2884,7 +2999,7 @@ main()
 
 	controlFlags = 0;
    reSyncCount = 0; reSyncPktID = 0; reSynced = FALSE;
-   pktError = 0;
+   pktError = 0; spDError = 0;
 
    output1State = FALSE, output1Timer = 0;
    output2State = FALSE, output2Timer = 0;
@@ -2905,6 +3020,8 @@ main()
 
    setupEthernet();
 
+   setupSerialPortD();
+
    // setup all registers and I/O ports
 //debug mks   initRegisters();
 
@@ -2919,7 +3036,7 @@ main()
 
       waitForHostTCPIPConnection(&socket);
 
-      printf("Waiting for command...\n");
+      printf("\nWaiting for command...\n");
 
       //this is the main processing loop
 
@@ -2932,7 +3049,9 @@ main()
          // and the value usually equals the number of bytes read to
          // complete the packet
 
-         if (processDataPackets(&socket, FALSE) == -1) pktError++;
+         if (processEthernetData(&socket, FALSE) == -1) pktError++;
+
+			if (processSerialPortDData(FALSE) == -1) spDError++;
 
          //process events timed with timer B
          countTimerBInts();
