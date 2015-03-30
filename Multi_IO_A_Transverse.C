@@ -2894,7 +2894,7 @@ void waitForHostViaUDP()
 void waitForHostTCPIPConnection(tcp_Socket *socket)
 {
 
-	const char * const greeting = "Hello from Control Board!\n";
+	const char * const greeting = "Hello from the device!\n";
 	const int greetingLength = 26;
 
    tcp_listen(socket,PORT,0,0,NULL,0);
