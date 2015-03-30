@@ -49,43 +49,7 @@
 			Out 3:	multi-purpose ground switching transistor control
 			Out 4:	multi-purpose ground switching transistor control
 
-
- Inspection Control Signal from PLC
-
- 	low voltage signal (read as 1) -- no pipe in system
- 	low to high voltage transition (read as 1 to 0) --
-	   leading vertical eye has detected end of tube
-   short pulse high-low-high (read as 0-1-0) -- head 1 lowered or raised
-   longer pulse high-low-high (read as 0-1-0) -- head 2 lowered or raised
-	high to low for longer time than above (read as 0-1) --
-   	trailing vertical eye has cleared end of tube
-
- Inspection Control Commands to Host
-
- 	1 - no tube detected
- 	2 - leading vertical eye is on tube
-   3 - head 1 lowered
-   4 - head 2 lowered
-   5 - head 1 raised
-   6 - head 2 raised
-
-   Each time the command changes to reflect a new action (such as
-   head 1 lowering), it stays at that value until a new action occurs
-   (such as head 2 lowering).
-
-	When inspecting in direction away from home, typical sequence is:
-   	1, 2, 3, 4, 5, 6, 1
-
-	For direction towards home:
-   	1, 2, 4, 3, 6, 5, 1
-
-      Note: These assume that carriage is not reversed off the tube
-      		or any action taken that causes the heads to be
-            raised/lowered out of sequence. In those cases, the
-            command sequence will vary accordingly.
-
-
-	UT Main Pulse Sync and Track Sync Control Lines
+	Track Sync Control Lines
 
 	Track Sync:
 
@@ -113,10 +77,6 @@
       received. Only performs a Track Sync Reset (along with a Track Sync pulse
       to clock in the reset) if requested by the Host computer.
 
-   UT Main Pulse Sync:
-
-   This program does not currently manipulate the Pulse Firing signals. One
-   of the UT boards is usually set up as the master to control those lines.
 
 *******************************************************************/
 
@@ -181,8 +141,6 @@
 #define UNUSED4 1		// bit on Port E
 
 #define ON_PIPE_CTRL 1
-#define HEAD1_DOWN_CTRL 2
-#define HEAD2_DOWN_CTRL 4
 
 #define DS2 0
 #define DS3 1
@@ -235,7 +193,7 @@
 #use "dcrtcp.lib"  //tcpip library
 
 //Change this number when the code is changed.
-#define VERSION "1.2t"
+#define VERSION "1.0"
 
 //firmware code upload buffer size is 1024 data bytes plus one command byte
 #define CODE_BUFFER_SIZE 1025
@@ -292,11 +250,6 @@ const int timerb_inc= TIMERB_INCREMENT&0xff | ((TIMERB_INCREMENT<<6) & 0xc000);
 #define PULSE_SYNC 3				// bit on Port E
 #define PULSE_SYNC_RESET 4		// bit on Port E
 
-#define HEAD1_SIGNAL_WIDTH 10	//width of signal pulse for head 1 up/down
-#define HEAD2_SIGNAL_WIDTH 30	//width of signal pulse for head 2 up/down
-#define OFF_PIPE_SIGNAL_WIDTH 40 //width of signal pulse for off pipe (or longer)
-
-#define INSPECT_CONTROL_DEGLITCH_COUNT 20
 #define TDC_DEGLITCH_COUNT 10
 
 #define TRACK_SYNC_PULSE_WIDTH 20
@@ -337,10 +290,6 @@ int resetPulseTrack = FALSE;
 
 long encoderPosAtOnPipeSignal = 0;
 long encoderPosAtOffPipeSignal = 0;
-long encoderPosAtHead1DownSignal = 0;
-long encoderPosAtHead1UpSignal = 0;
-long encoderPosAtHead2DownSignal = 0;
-long encoderPosAtHead2UpSignal = 0;
 
 /* used along with TDC photo eye simulation code
 long trackSyncResetPulseInactiveCount = 0; //debug mks
@@ -370,8 +319,6 @@ long inspectionCtrlTimer = 0;
 long inspectionCtrlTime = 0;
 int inspectionStatus = 0;
 int onPipe = FALSE;
-int head1Down = FALSE;
-int head2Down = FALSE;
 
 int inspectMode = FALSE;
 
@@ -904,26 +851,6 @@ int getAllEncoderValues(tcp_Socket *socket, int pPktID)
    buffer[x++] = (char)((encoderPosAtOffPipeSignal >> 8) & 0xff);
    buffer[x++] = (char)(encoderPosAtOffPipeSignal & 0xff);
 
-   buffer[x++] = (char)((encoderPosAtHead1DownSignal >> 24) & 0xff);
-   buffer[x++] = (char)((encoderPosAtHead1DownSignal >> 16) & 0xff);
-   buffer[x++] = (char)((encoderPosAtHead1DownSignal >> 8) & 0xff);
-   buffer[x++] = (char)(encoderPosAtHead1DownSignal & 0xff);
-
-   buffer[x++] = (char)((encoderPosAtHead1UpSignal >> 24) & 0xff);
-   buffer[x++] = (char)((encoderPosAtHead1UpSignal >> 16) & 0xff);
-   buffer[x++] = (char)((encoderPosAtHead1UpSignal >> 8) & 0xff);
-   buffer[x++] = (char)(encoderPosAtHead1UpSignal & 0xff);
-
-   buffer[x++] = (char)((encoderPosAtHead2DownSignal >> 24) & 0xff);
-   buffer[x++] = (char)((encoderPosAtHead2DownSignal >> 16) & 0xff);
-   buffer[x++] = (char)((encoderPosAtHead2DownSignal >> 8) & 0xff);
-   buffer[x++] = (char)(encoderPosAtHead2DownSignal & 0xff);
-
-   buffer[x++] = (char)((encoderPosAtHead2UpSignal >> 24) & 0xff);
-   buffer[x++] = (char)((encoderPosAtHead2UpSignal >> 16) & 0xff);
-   buffer[x++] = (char)((encoderPosAtHead2UpSignal >> 8) & 0xff);
-   buffer[x++] = (char)(encoderPosAtHead2UpSignal & 0xff);
-
    //send the buffer to host
    sendPacketHeader(socket, GET_ALL_ENCODER_VALUES_CMD);
    sock_flushnext(socket);
@@ -957,10 +884,6 @@ int zeroAllEncoderValues()
 
 	encoderPosAtOnPipeSignal = 0;
 	encoderPosAtOffPipeSignal = 0;
-	encoderPosAtHead1DownSignal = 0;
-	encoderPosAtHead1UpSignal = 0;
-	encoderPosAtHead2DownSignal = 0;
-	encoderPosAtHead2UpSignal = 0;
 
 }//end of zeroAllEncoderValues
 //----------------------------------------------------------------------------
@@ -1224,8 +1147,6 @@ int sendInspectPacket(tcp_Socket *socket)
 
    //transfer inspection control flags to the buffer
    if (onPipe) controlFlags = (controlFlags | ON_PIPE_CTRL);
-   if (head1Down) controlFlags = (controlFlags | HEAD1_DOWN_CTRL);
-   if (head2Down) controlFlags = (controlFlags | HEAD2_DOWN_CTRL);
 
    buffer[x++] = controlFlags;
 
@@ -1331,78 +1252,6 @@ int getMonitorPacket(tcp_Socket *socket, int pPktID)
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// parseInspectionCtrl
-//
-// Parses the meaning of the state of the Inspection Control signal based
-// on its current state and the time it was in its last state.
-//
-// Only call this function when the signal has just changed state.
-//
-// The current deglitched value of the Inspection Control Signal should be
-// passed in via pInspectionControlNow so no time is wasted in deglitching
-// the input again in this function.
-//
-// NOTE: When PLC sends a high signal, it is read as low by the Rabbit.
-//
-
-void parseInspectionCtrl(int pInspectionCtrlNow)
-{
-	//this function is called only after the Inspection Control input has
-   //changed
-
-	//if the signal went low but onPipe is false, then must have just
-   //come on to the pipe
-	if(pInspectionCtrlNow == 0 && onPipe == FALSE){
-   	onPipe = TRUE;
-      inspectionStatus=2;
-		encoderPosAtOnPipeSignal = enc2CntTemp.lVal;
-      return;
-	}
-
-   //if the signal went low, already on pipe (off pipe caught above), and
-   //time duration of previous state is near HEAD1_SIGNAL_WIDTH, then
-   //head 1 was raised or lowered and a high pulse was received from PLC
-	if((pInspectionCtrlNow == 0)
-   		&& (inspectionCtrlTime > (HEAD1_SIGNAL_WIDTH-2))
-         && (inspectionCtrlTime < (HEAD1_SIGNAL_WIDTH+2))){
-
-		//switch state of head 1
-		if (head1Down == FALSE) {
-      	head1Down = TRUE;
-      	inspectionStatus=3;
-			encoderPosAtHead1DownSignal = enc2CntTemp.lVal;
-      } else {
-      	head1Down = FALSE;
-      	inspectionStatus=5;
-			encoderPosAtHead1UpSignal = enc2CntTemp.lVal;
-      }
-      return;
-	}
-
-   //if the signal went low, already on pipe (off pipe caught above), and
-   //time duration of previous state is near HEAD2_SIGNAL_WIDTH, then
-   //head 2 was raised or lowered and a high pulse was received from PLC
-	if((pInspectionCtrlNow == 0)
-   		&& (inspectionCtrlTime > (HEAD2_SIGNAL_WIDTH-2))
-         && (inspectionCtrlTime < (HEAD2_SIGNAL_WIDTH+2))){
-
-		//switch state of head 2
-		if (head2Down == FALSE){
-      	head2Down = TRUE;
-         inspectionStatus=4;
-			encoderPosAtHead2DownSignal = enc2CntTemp.lVal;
-      } else {
-      	head2Down = FALSE;
-			inspectionStatus=6;
-			encoderPosAtHead2UpSignal = enc2CntTemp.lVal;
-         }
-      return;
-	}
-
-}//end of parseInspectionCtrl
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
 // deglitchSignal
 //
 // Reads the input port pPort bit pBit in a manner which protects against false
@@ -1444,8 +1293,6 @@ int setToOffPipeState()
 {
 
 	onPipe = FALSE;
-	head1Down = FALSE;
-	head2Down = FALSE;
 
 	inspectionStatus = 1;
 
@@ -1907,7 +1754,6 @@ void countTimerBInts()
 {
 
 	long countBTemp;
-   int inspectionCtrlNow;
 
 	// retrieve the timer B counter
 	countBAccessFlag = 1; // block the ISR from modifying
@@ -1968,57 +1814,7 @@ void countTimerBInts()
 		}
 	} //if (output4Timer != 0)
 
-   //get the deglitched value of the inspection control signal input
-   inspectionCtrlNow =
-		deglitchSignal(PADR, INSPECT, INSPECT_CONTROL_DEGLITCH_COUNT);
-
-   //every time the Inspection Control input changes state, store the time
-   //it was in the last state and start timing the new state
-	if(inspectionCtrl != inspectionCtrlNow){
-	   inspectionCtrl = inspectionCtrlNow;
-   	inspectionCtrlTime = tickCount - inspectionCtrlTimer;
-		inspectionCtrlTimer = tickCount;
-		//call to parse the meaning of the state of the Inspection Control signal
-		parseInspectionCtrl(inspectionCtrlNow);
-	}else
-   //if state hasn't changed, then watch for extended high state -- means
-   //head is off pipe
-   if( (inspectionCtrlNow == 1) &&
-   		((tickCount - inspectionCtrlTimer) > OFF_PIPE_SIGNAL_WIDTH) ){
-
-         setToOffPipeState(); //reset all variables to "off pipe" state
-         inspectionCtrl = inspectionCtrlNow;
-       	inspectionCtrlTimer = tickCount;
-   }
-
 }//end of countTimerBInts
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// getChassisSlotAddress
-//
-// Returns the board's chassis and slot address in a byte.  Returns the
-// status byte as well.
-//
-
-int getChassisSlotAddress(tcp_Socket *socket, int pPktID)
-{
-
-   int result;
-	char	buffer[2];
-
-	//read in the remainder of the packet
-	result = readBytesAndVerify(socket, buffer, 1, pPktID);
-	if (result < 0) return(result);
-
-	buffer[0] = (byte)(((byte)chassisAddr<<4 & 0xf0) + ((byte)slotAddr & 0xf));
-	buffer[1] = status;
-
-	sendPacketHeader(socket, GET_CHASSIS_SLOT_ADDRESS_CMD);
-	sock_flushnext(socket);
-	sock_write(socket,buffer,2);
-
-}//end of getChassisSlotAddress
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -3025,9 +2821,6 @@ int processDataPackets(tcp_Socket *socket, int pWaitForPkt)
    //store the ID of the packet (the packet type)
    pktID = pktBuffer[0];
 
-   if (pktID == GET_CHASSIS_SLOT_ADDRESS_CMD)
-      return getChassisSlotAddress(socket, pktID);
-   else
    // return the status byte which tells the state of the system
    if (pktID == GET_STATUS_CMD) return getStatus(socket, pktID);
    else
