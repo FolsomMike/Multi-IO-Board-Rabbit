@@ -2704,7 +2704,65 @@ void initRegisters()
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// waitForHost
+// setupEthernet
+//
+// Prepares an ethernet socket for use as a UDP and a TCP/IP connection.
+//
+
+setupEthernet()
+{
+
+   char  buffer[100];
+   char MACbuffer[7];
+   longword IPaddr;
+
+   //obtain a socket for use by TCPIP and UDP
+   // Start network and wait for interface to come up (or error exit).
+   sock_init_or_exit(1);
+
+  	// To avoid having to manually register each device's IP in the host computer,
+   // they use the MAC address to derive an IP address. The host then collects
+   // these IP addresses using a UDP broadcast/response to all listening
+   // devices.  Each board is supposed to have a unique MAC stored in it by the
+   // manufacturer - use the bottom two bytes of the MAC as the bottom two bytes
+   // of the IP which will make it very unlikely that any two boards in a system
+   // have the same IP.
+
+   pd_getaddress(0, MACbuffer);
+   printf("Link Address: %02x%02x:%02x%02x:%02x%02x\n", MACbuffer[0],
+         MACbuffer[1], MACbuffer[2], MACbuffer[3], MACbuffer[4], MACbuffer[5]);
+
+
+   //set the IP address for this board
+   //Use 169.254 for upper part to match the default for a Windows host which
+   //cannot retrieve a dynamic IP (as is usually the case when connected to this
+   //system) - this allows the Windows host to communicate with the system.
+   //Use the two lower bytes of the board's MAC as the two lower bytes of the IP
+   //to produce a (mostly) unique IP.
+
+   IPaddr = ((longword)169<<24) + ((longword)254<<16)
+                   + ((longword)MACbuffer[4]<<8) + ((longword)MACbuffer[5]);
+
+   //set the IP address
+   ifconfig(IF_DEFAULT,
+            IFS_DOWN,
+            IFS_IPADDR, IPaddr,
+            IFS_UP,
+            IFS_END);
+
+   //retrieve the host ID into a string
+   //because the netmask is set to 255.255.0.0, this function always returns
+   //255.255 for the top two bytes
+   inet_ntoa(buffer, gethostid());
+
+   //display the IP address
+   printf("Changing local IP address to: %s\n", buffer);
+
+}//end of setupEthernet
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// waitForHostViaUDP
 //
 // Opens a UDP socket and waits for the broadcast message from the host.  The
 // board's IP address is then transmitted back to the host.
@@ -2733,7 +2791,7 @@ void initRegisters()
 // (the comment section above is mirrored in Capulin UT Board.c)
 //
 
-waitForHost()
+void waitForHostViaUDP()
 {
 
 #define SIZE_OF_UDP_BUFFER 128
@@ -2823,7 +2881,7 @@ waitForHost()
 
    udp_close(&socket);
 
-}//end of waitForHost
+}//end of waitForHostViaUDP
 //----------------------------------------------------------------------------
 
 //-----------------------------------------------------------------------------
@@ -3005,11 +3063,7 @@ main()
 {
 
    //TCPIP variables
-   int bytes_read;
-   char  buffer[100];
    tcp_Socket socket;
-   char MACbuffer[7];
-   longword IPaddr;
 
 	controlFlags = 0;
    reSyncCount = 0; reSyncPktID = 0; reSynced = FALSE;
@@ -3032,47 +3086,7 @@ main()
    // initialize I/O pins
    //brdInit();  -- DO NOT CALL brdInit - not a good config for Capulin --
 
-   //obtain a socket for use by TCPIP and UDP
-   // Start network and wait for interface to come up (or error exit).
-   sock_init_or_exit(1);
-
-  	// To avoid having to manually register each device's IP in the host computer,
-   // they use the MAC address to derive an IP address. The host then collects
-   // these IP addresses using a UDP broadcast/response to all listening
-   // devices.  Each board is supposed to have a unique MAC stored in it by the
-   // manufacturer - use the bottom two bytes of the MAC as the bottom two bytes
-   // of the IP which will make it very unlikely that any two boards in a system
-   // have the same IP.
-
-   pd_getaddress(0, MACbuffer);
-   printf("Link Address: %02x%02x:%02x%02x:%02x%02x\n", MACbuffer[0],
-         MACbuffer[1], MACbuffer[2], MACbuffer[3], MACbuffer[4], MACbuffer[5]);
-
-
-   //set the IP address for this board
-   //Use 169.254 for upper part to match the default for a Windows host which
-   //cannot retrieve a dynamic IP (as is usually the case when connected to this
-   //system) - this allows the Windows host to communicate with the system.
-   //Use the two lower bytes of the board's MAC as the two lower bytes of the IP
-   //to produce a (mostly) unique IP.
-
-   IPaddr = ((longword)169<<24) + ((longword)254<<16)
-                   + ((longword)MACbuffer[4]<<8) + ((longword)MACbuffer[5]);
-
-   //set the IP address
-   ifconfig(IF_DEFAULT,
-            IFS_DOWN,
-            IFS_IPADDR, IPaddr,
-            IFS_UP,
-            IFS_END);
-
-   //retrieve the host ID into a string
-   //because the netmask is set to 255.255.0.0, this function always returns
-   //255.255 for the top two bytes
-   inet_ntoa(buffer, gethostid());
-
-   //display the IP address
-   printf("Changing local IP address to: %s\n", buffer);
+   setupEthernet();
 
    // setup all registers and I/O ports
 //debug mks   initRegisters();
@@ -3084,7 +3098,7 @@ main()
    while(1) {
 
       //wait for the host computer to broadcast the roll call via UDP
-      waitForHost();
+      waitForHostViaUDP();
 
       tcp_listen(&socket,PORT,0,0,NULL,0);
 
