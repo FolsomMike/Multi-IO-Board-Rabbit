@@ -2810,14 +2810,20 @@ void waitForHostTCPIPConnection(tcp_Socket *socket)
 int processSerialPortDData(int pWaitForPkt)
 {
 
-	int numBytes;
+	int numBytes, ch;
 
    //wait for a packet if parameter is true
    if (pWaitForPkt){while(serXrdUsed(SER_PORT_D) < 5){}}
 
    //wait until 5 bytes are available - this should be the 4 header bytes, and
    //the packet identifier/command
-   if ((numBytes = serXrdUsed(SER_PORT_D)) < 5) return 0;
+   if ((numBytes = serXrdUsed(SER_PORT_D)) < 1) return 0; //debug mks change this from 1 to 5 or ???
+
+//   int serXread( void * data, int length, unsigned long tmout );
+
+   ch = serXgetc(SER_PORT_D);
+
+	printf("Byte from Serial Port D: %02x\n", ch);
 
 }//end of processSerialPortDData
 //-----------------------------------------------------------------------------
@@ -2994,6 +3000,8 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
 main()
 {
 
+	int ch; //debug mks remove this
+
    //TCPIP variables
    tcp_Socket socket;
 
@@ -3037,6 +3045,17 @@ main()
       waitForHostTCPIPConnection(&socket);
 
       printf("\nWaiting for command...\n");
+
+      //debug mks
+
+      ch = 33;
+
+      printf("\nSending byte to Master PIC: %02x\n", ch);
+
+      serXputc(SER_PORT_D, ch);
+
+      //debug mks end
+
 
       //this is the main processing loop
 
