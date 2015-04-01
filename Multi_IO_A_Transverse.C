@@ -21,62 +21,6 @@
 
     I/O Assignments
 
-      5 Volt Inputs (higher voltage requires inline resistor)
-
-      	Encoder1 (Rotational)
-
-			A  : Input 1, Port A0
-			B  : Input 2, Port A1
-
-      	Encoder2 (Linear)
-
-			A  : Input 3, Port A2
-			B	: Input 4, Port A3
-
-			Unused			: Input 5, Port A4
-			Unused			: Input 6, Port A5
-
-		12 Volt inputs (higher voltage requires inline resistor)
-
-			Inspection Control	: Input 7,	Port A6
-      	Unused 					: Input 8,	Port A7
-      	Top Dead Center		: Input 9, 	Port E0
-     		Unused					: Input 10, Port E1
-
-		Outputs (driven by host, so purpose is defined by host
-
-			Out 1:	multi-purpose ground switching transistor control
-			Out 2:	multi-purpose ground switching transistor control
-			Out 3:	multi-purpose ground switching transistor control
-			Out 4:	multi-purpose ground switching transistor control
-
-	Track Sync Control Lines
-
-	Track Sync:
-
-   	The Track Sync and Track Sync Reset lines allow the Control Board to send
-	   signals to other boards in the chassis, such as UT Boards. This signal can
-   	be used to transmit rotational position (TDC and clock) or linear position
-	   information.
-
-   	Tracking Modes:
-
-		The host can select between different tracking modes by setting flags
-	   in the controlFlags variable:
-
-		RABBIT_SEND_CLOCK_MARKERS
-
-   	Pulses the Track Sync Reset line (along with a Track Sync pulse to clock
-      in the reset) each time the Top-Dead-Center signal is received. Pulses
-      the Track Sync line once at each clock position (11) between the TDC
-      signals. Thus the reset occurs once per revolution while the sync
-      occurs 12 times per revolution.
-
-		RABBIT_SEND_TDC
-
-   	Pulses the Track Sync line once each time the Top-Dead-Center signal is
-      received. Only performs a Track Sync Reset (along with a Track Sync pulse
-      to clock in the reset) if requested by the Host computer.
 
 
 *******************************************************************/
@@ -121,37 +65,8 @@
 // The control register flags are set by the host to control functions of
 // the Rabbit microprocessor.
 
-// transmit tracking pulse to DSPs for every o'clock position and a reset
-// pulse at every TDC
-#define RABBIT_SEND_CLOCK_MARKERS 			0x0001
-// transmit a single pulse at every TDC detection and a reset pulse for
-// every linear advance of one step
-#define RABBIT_SEND_TDC							0x0002
-// enables the sending of track sync pulses (does not affect track reset pulses)
-#define TRACK_PULSES_ENABLED					0x0004
-
-//rotational
-#define ENC1A 0  		// bit on Port A
-#define ENC1B 1		// bit on Port A
-
-//linear
-#define ENC2A 2		// bit on Port A
-#define ENC2B 3		// bit on Port A
-
-#define UNUSED1 4		// bit on Port A
-#define UNUSED2 5		// bit on Port A
-#define INSPECT 6		// bit on Port A
-#define UNUSED3 7		// bit on Port A
-#define TDC 0			// bit on Port E
-#define UNUSED4 1		// bit on Port E
-
-#define ON_PIPE_CTRL 1
-
-#define DS2 0
-#define DS3 1
-
-#define DS2_BIT 2
-#define DS3_BIT 3
+#define flag1 			0x0001
+#define flag2			0x0002
 
 // Notes about the IP Address and Subnet Mask
 // When a Windows computer is connected to the local network with only the
@@ -248,23 +163,16 @@ const int timerb_inc= TIMERB_INCREMENT&0xff | ((TIMERB_INCREMENT<<6) & 0xc000);
 #define OUTPUT3 5		// bit on Port C
 #define OUTPUT4 7		// bit on Port C
 
-//C0, C2 default to outputs on reset - they are used for position tracking
-//signals between boards in the system and their startup state is not important
+//C0, C2 default to outputs on reset
 
-#define TRACK_SYNC 0				// bit on Port C
-#define TRACK_SYNC_RESET 2		// bit on Port C
+#define portC0 0		// bit on Port C
+#define portC2 2		// bit on Port C
 
-//E3, E4 - used for UT pulse syncing between UT boards -- not normally driven
-//by the Control board
+//E3, E4
 
-#define PULSE_SYNC 3				// bit on Port E
-#define PULSE_SYNC_RESET 4		// bit on Port E
+#define portE3 3		// bit on Port E
+#define portE4 4		// bit on Port E
 
-#define TDC_DEGLITCH_COUNT 10
-
-#define TRACK_SYNC_PULSE_WIDTH 20
-#define TRACK_RESET_PULSE_WIDTH 20
-#define TRACK_RESET_PULSE_HALF_WIDTH 10
 
 //----------------------------------------------------------------------------
 // Global Variables
@@ -290,46 +198,15 @@ char countBAccessFlag;	// used to prevent ISR updating counter values while
 						// they are being accessed by the non-ISR code
 long tickCount; //incremented approximately every .01 seconds
 
-int trackSyncPulseActive = FALSE;
-long trackSyncPulseWidthCount = 0;
-int trackSyncResetPulseActive = FALSE;
-long trackSyncResetPulseWidthCount = 0;
-long trackSyncPulseInactiveCount = -1;
-long trackSyncPulseStartDelayCount = -1;
-
-int resetPulseTrack = FALSE;
-
 long encoderPosAtOnPipeSignal = 0;
 long encoderPosAtOffPipeSignal = 0;
-
-/* used along with TDC photo eye simulation code
-long trackSyncResetPulseInactiveCount = 0; //debug mks
-int tdcInput = 1; //debug mks
-*/
-
 
 short output1State, output1Timer;
 short output2State, output2Timer;
 short output3State, output3Timer;
 short output4State, output4Timer;
 
-long encoder1Count; 	// counter for tracking encoder 1 position
-long encoder2Count;	// counter for tracking encoder 1 position
-char encAccessFlag; // used to prevent ISR updating counter values while they
-					// are being accessed by the non-ISR code
-
-//number of encoder counts to trigger an update to the host
-short encoder1Delta, encoder2Delta;
-
 int forceSendInspectPacket = FALSE;
-
-//set inspectionCtrl to a number other than 0 or 1 so the first time through
-//it will not match the port bit read
-int inspectionCtrl = 255;
-long inspectionCtrlTimer = 0;
-long inspectionCtrlTime = 0;
-int inspectionStatus = 0;
-int onPipe = FALSE;
 
 int inspectMode = FALSE;
 
@@ -338,15 +215,6 @@ int monitorMode = FALSE;
 int inspectPacketCount = 0;
 
 byte status = 0;
-
-int rpm = 0, prevRPM = 0, tdcOffReflector = 0;
-long tdcPeriodCount=0;
-long prevTDCPeriodCount=0;
-long clockPeriodCount;
-int maxClockPositions = 12;
-long prevTDCCount = 0;
-int rpmCorrectionCount = 0;
-int rpmVariance;
 
 // end of Global Variables
 //----------------------------------------------------------------------------
@@ -413,6 +281,30 @@ long prevEnc1Cnt, prevEnc2Cnt;
 
 #define NO_STATUS 0
 
+//----------------------------------------------------------------------------
+// sendBytesViaSerialPortD
+//
+// Sends bytes via serial port D.
+//
+
+void sendBytesViaSerialPortD(int pNumArgs,...)
+{
+
+   va_list valist;
+   int i;
+
+   va_start(valist, pNumArgs); // initialize valist to hold the arguments
+
+   // send bytes via serial port
+
+   for (i = 0; i < pNumArgs; i++){
+      serXputc(SER_PORT_D, va_arg(valist, int));
+   }
+
+   va_end(valist);	// clean memory reserved for valist
+
+}//end of sendBytesViaSerialPortD
+//----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
 // send2Bytes
@@ -830,99 +722,6 @@ int getStatus(tcp_Socket *socket, int pPktID)
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// getAllEncoderValues
-//
-// Returns all encoder values saved at different points in the inspection
-// process.
-//
-// The data is sent back to the host via the socket.
-//
-
-int getAllEncoderValues(tcp_Socket *socket, int pPktID)
-{
-
-   char buffer[50];
-   int x, result;
-
-   //read in the remainder of the packet
-   result = readBytesAndVerify(socket, buffer, 1, pPktID);
-   if (result < 0) return(result);
-
-   x = 0;
-
-   //place encoders values into the buffer by byte, MSB first
-
-   buffer[x++] = (char)((encoderPosAtOnPipeSignal >> 24) & 0xff);
-   buffer[x++] = (char)((encoderPosAtOnPipeSignal >> 16) & 0xff);
-   buffer[x++] = (char)((encoderPosAtOnPipeSignal >> 8) & 0xff);
-   buffer[x++] = (char)(encoderPosAtOnPipeSignal & 0xff);
-
-   buffer[x++] = (char)((encoderPosAtOffPipeSignal >> 24) & 0xff);
-   buffer[x++] = (char)((encoderPosAtOffPipeSignal >> 16) & 0xff);
-   buffer[x++] = (char)((encoderPosAtOffPipeSignal >> 8) & 0xff);
-   buffer[x++] = (char)(encoderPosAtOffPipeSignal & 0xff);
-
-   //send the buffer to host
-   sendPacketHeader(socket, GET_ALL_ENCODER_VALUES_CMD);
-   sock_flushnext(socket);
-   //x already incremented properly for use as packet size
-   sock_write(socket, buffer, x);
-
-   return(1); //return number of bytes read from socket
-
-}//end of getAllEncoderValues
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// zeroAllEncoderValues
-//
-// Sets counters for the encoders to zero.
-//
-// Zeroes all encoder count variables.
-//
-
-int zeroAllEncoderValues()
-{
-
-   encAccessFlag = 1; // block the ISR from modifying
-
-   encoder1Count = 0;
-   encoder2Count = 0;
-
-   encAccessFlag = 0; // unblock the ISR
-
-   //reset various encoder values
-
-	encoderPosAtOnPipeSignal = 0;
-	encoderPosAtOffPipeSignal = 0;
-
-}//end of zeroAllEncoderValues
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// zeroEncoderCounts
-//
-// Sets counters for the encoders to zero.
-//
-
-int zeroEncoderCounts(tcp_Socket *socket, int pPktID)
-{
-
-   int x, result;
-   char buffer[2];
-
-   //read in the remainder of the packet
-   result = readBytesAndVerify(socket, buffer, 2, pPktID);
-   if (result < 0) return(result);
-
-   zeroAllEncoderValues();
-
-   return(0);
-
-}//end of zeroEncoderCounts
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
 // pulseOutput
 //
 // Pulses the output lines specified by the byte in the packet from the host.
@@ -1049,21 +848,6 @@ int turnOffOutput(tcp_Socket *socket, int pPktID)
 int setEncodersDeltaTrigger(tcp_Socket *socket, int pPktID)
 {
 
-   int x, result;
-   char buffer[5];
-
-   //read in the remainder of the packet
-   result = readBytesAndVerify(socket, buffer, 5, pPktID);
-   if (result < 0) return(result);
-
-   x = 0;
-
-   //get the encoder 1 delta trigger
-   encoder1Delta = (unsigned)((buffer[x++]<<8) & 0xff00)
-                                     + (unsigned)(buffer[x++] & 0xff);
-
-   encoder2Delta = (unsigned)((buffer[x++]<<8) & 0xff00)
-                                     + (unsigned)(buffer[x++] & 0xff);
 
    return(0);
 
@@ -1088,10 +872,6 @@ int startInspect(tcp_Socket *socket, int pPktID)
    result = readBytesAndVerify(socket, buffer, 2, pPktID);
    if (result < 0) return(result);
 
-   zeroAllEncoderValues();
-
-   //start processing inputs and sending inspect data packets
-   inspectMode = TRUE;
 
    return(0);
 
@@ -1113,8 +893,6 @@ int stopInspect(tcp_Socket *socket, int pPktID)
    //read in the remainder of the packet
    result = readBytesAndVerify(socket, buffer, 2, pPktID);
    if (result < 0) return(result);
-
-   inspectMode = FALSE;
 
    return(0);
 
@@ -1156,9 +934,6 @@ int sendInspectPacket(tcp_Socket *socket)
 
    controlFlags = 0;
 
-   //transfer inspection control flags to the buffer
-   if (onPipe) controlFlags = (controlFlags | ON_PIPE_CTRL);
-
    buffer[x++] = controlFlags;
 
    buffer[x++] = RdPortI(PEDR);
@@ -1182,30 +957,6 @@ int sendInspectPacket(tcp_Socket *socket)
 void processInspect(tcp_Socket *socket)
 {
 
-   // retrieve the encoder count values
-   encAccessFlag = 1; // block the ISR from modifying
-   enc1CntTemp.lVal = encoder1Count; //snag the values to local variables
-   enc2CntTemp.lVal = encoder2Count;
-   encAccessFlag = 0; // unblock the ISR
-
-   //if the specified trigger encoder has moved the trigger distance, send a
-   //packet to the host
-
-   //wip mks - host needs to specify which encoder to use, add choice here
-
-   if (forceSendInspectPacket ||
-        (labs(enc2CntTemp.lVal - prevEnc2Cnt) >= encoder2Delta)){
-
-      forceSendInspectPacket = FALSE;
-
-      //save counts for future comparisons
-      prevEnc1Cnt = enc1CntTemp.lVal; prevEnc2Cnt = enc2CntTemp.lVal;
-
-      sendInspectPacket(socket);
-
-   }
-   else
-   	return;
 
 }//end of processInspect
 //----------------------------------------------------------------------------
@@ -1226,12 +977,6 @@ int getInspectPacket(tcp_Socket *socket, int pPktID)
    //read in the remainder of the packet
    result = readBytesAndVerify(socket, buffer, 2, pPktID);
    if (result < 0) return(result);
-
-   // retrieve the encoder count values
-   encAccessFlag = 1; // block the ISR from modifying
-   enc1CntTemp.lVal = encoder1Count; //snag the values to local variables
-   enc2CntTemp.lVal = encoder2Count;
-   encAccessFlag = 0; // unblock the ISR
 
    //send the packet
    sendInspectPacket(socket);
@@ -1303,450 +1048,11 @@ int deglitchSignal(int pPort, int pBit, int pCheckCount)
 int setToOffPipeState()
 {
 
-	onPipe = FALSE;
-
-	inspectionStatus = 1;
-
-   //store the current linear encoder position
-   encoderPosAtOffPipeSignal = enc2CntTemp.lVal;
-
    //force send an inspection packet in case the encoder does not turn
    //enough afterwards to send the final packet to the host
    forceSendInspectPacket = TRUE;
 
 }//end of setToOffPipeState
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// resetTrack
-//
-// Sends a track counter reset pulse to the DSPs.
-//
-// NOTE: If the host issues a reset command, this function is called. It is
-// best if the TRACK_PULSES_ENABLED has been cleared before the call. The
-// reset will still pulse the track lines even if the flag is cleared, but the
-// function which pulses the sync line at each clock period will be disabled
-// and won't interfere.
-//
-
-void resetTrack(long pCountBTemp)
-{
-
-   //deactivate the track sync pulse output in case it happens to
-   //be currently in progress -- to reset the counter, the reset line
-   //has to be low during a hi/low trigger transition, so the trigger
-   //needs to be high before the reset pulse/trigger are fired together
-   BitWrPortI(PCDR, &PCDRShadow, 1, TRACK_SYNC); //PC0
-   trackSyncPulseActive = FALSE;
-
-	//make sure period tracking code doesn't fire the sync pulse during reset
-	trackSyncPulseInactiveCount = LONG_MAX;
-
-   //start pulse of track sync reset signal to inspection boards
-   BitWrPortI(PCDR, &PCDRShadow, 0, TRACK_SYNC_RESET); //PC2
-   trackSyncResetPulseActive = TRUE;
-   //set width of pulse
-   trackSyncResetPulseWidthCount = pCountBTemp + TRACK_RESET_PULSE_WIDTH;
-
-   //fire a trigger sync pulse halfway through the reset pulse
-   //reset must be low during a hi/low sync pulse to be clocked in
-   trackSyncPulseStartDelayCount = pCountBTemp + TRACK_RESET_PULSE_HALF_WIDTH;
-
-}//end of resetTrack
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// resetTrackOnTDC
-//
-// Sends a track counter reset pulse to the DSPs each time the TDC sensor
-// is triggered.
-//
-// Calculates the number of timer counts for each clock period based on the
-// clock count recorded for the last TDC period.
-//
-// Counts calls between changes to the input.
-// Computes RPM each time the TDC goes active.
-//
-// This function should be called approximately every third time the Timer B ISR
-// increments timerBCount.
-//
-
-void resetTrackOnTDC(long pCountBTemp)
-{
-
-long allowedRPMVariance;
-int tdcDeglitched;
-
-/*
-//debug mks -- simulates the photo eye
-if (trackSyncResetPulseInactiveCount-- == 0){
-
-	//syncPulseInactiveCount = 90; //value of 90 is 10 mS
-
-	//syncPulseInactiveCount = 90; //value of 90 is 9 mS
-
-   //trackSyncResetPulseInactiveCount = 130000; //10 seconds
-
-   trackSyncResetPulseInactiveCount = 13000; //1 seconds
-
-   tdcInput = 0;
-
-	}
-//debug mks end
-*/
-	//get the current, deglitched state of the TDC input
-	tdcDeglitched = deglitchSignal(PEDR, TDC, TDC_DEGLITCH_COUNT);
-
-   //check if TDC input went from "off reflector" to "on reflector"
-
-   //if last read showed "off reflector" and now on it, process TDC trigger
-   if (tdcOffReflector){
-
-   	//TDC is off the reflector, check to see if it just came on
-      //(input bit set to 0 when eye receives reflection)
-
-    	if (!tdcDeglitched){
-
-	      //now on reflector
-   	   tdcOffReflector = FALSE;
-
-         //store the current rpm so it can be compared with the next value
-         prevRPM = rpm;
-			//get number of timer B counts since last off/on transition
-			tdcPeriodCount = pCountBTemp - prevTDCCount;
-			//starting point for calculating the next period
-			prevTDCCount = pCountBTemp;
-
-         //handle missed reflector hits or extra noise hit:
-         //compare the period time with the previous value -- if greater than
-         //10% difference, then ignore the new value and use a value 5%
-         //more or less than the old value depending on whether the new value
-         //is smaller or larger than the old value -- thus a missed hit will
-         //usually be 100% different and will be corrected, but if the rotation
-         //is slowing down or speeding up intentionally, the period will be
-         //able to track it at 5% change for each reflector hit
-         //If a correction is made more than 10 times in a row, then no
-         //correction will be made -- this allows the value to catch up with
-         //the actual RPM in cases where it is ramping up or down quickly.
-
-         allowedRPMVariance = (long)(prevTDCPeriodCount * 0.1);
-
-         if (rpmCorrectionCount < 10 &&
-         		tdcPeriodCount > (prevTDCPeriodCount + allowedRPMVariance)){
-	         rpmCorrectionCount++; //count number of times corrected
-            tdcPeriodCount =
-            	prevTDCPeriodCount + (long)(prevTDCPeriodCount * 0.05);
-         }
-			else
-         if (rpmCorrectionCount < 10 &&
-         		tdcPeriodCount < (prevTDCPeriodCount - allowedRPMVariance)){
-	         rpmCorrectionCount++; //count number of times corrected
-         	tdcPeriodCount =
-	            prevTDCPeriodCount - (long)(prevTDCPeriodCount * 0.05);
-         }
-         else{
-         	rpmCorrectionCount = 0; //not corrected this time, so start over
-         }
-
-         prevTDCPeriodCount = tdcPeriodCount;
-
-      	//calculate RPM
-         if (tdcPeriodCount > 0)
-      		rpm = (int)((1.0 / (tdcPeriodCount * 0.0002857)) * 60.0);
-			else
-         	rpm = 0;
-
-         rpmVariance = rpm - prevRPM;
-
-         //based on the count for one revolution, calculate the counts
-         //expected for a single clock position and use this to drive
-         //the track sync pulse during the next revolution
-         clockPeriodCount = tdcPeriodCount / maxClockPositions;
-
-			//send Track counter reset pulse to all DSP boards
-         if((controlFlags & TRACK_PULSES_ENABLED) != 0){
-	         resetTrack(pCountBTemp);
-         }
-
-      }//if (!tdcDeglitched)
-
-   }//if (tdcOffReflector)
-   else{
-   	//TDC is on the reflector, check to see if it just went off
-    	if (tdcDeglitched){
-      	tdcOffReflector = TRUE;
-      }//if (tdcDeglitched)
-
-   }//else of if (tdcOffReflector)
-
-//tdcInput = 1; //debug mks -- part of the TDC simulation (see top of function)
-
-}//end of resetTrackOnTDC
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// incrementTrackOnTDC
-//
-// Processes input data from the TDC sensor. Used for wall mapping mode.
-//
-// Sends a track increment pulse to the DSPs each time the TDC sensor is
-// triggered.
-//
-// Counts calls between changes to the input.
-// Computes RPM each time the TDC goes active.
-//
-// This function should be called approximately every third time the Timer B ISR
-// increments timerBCount.
-//
-
-void incrementTrackOnTDC(long pCountBTemp)
-{
-
-long allowedRPMVariance;
-int tdcDeglitched;
-
-	//get the current, deglitched state of the TDC input
-	tdcDeglitched = deglitchSignal(PEDR, TDC, TDC_DEGLITCH_COUNT);
-
-   //check if TDC input went from "off reflector" to "on reflector"
-
-   //if last read showed "off reflector" and now on it, process TDC trigger
-   if (tdcOffReflector){
-
-   	//TDC is off the reflector, check to see if it just came on
-      //(input bit set to 0 when eye receives reflection)
-
-    	if (!tdcDeglitched){
-
-	      //now on reflector
-   	   tdcOffReflector = FALSE;
-
-         //store the current rpm so it can be compared with the next value
-         prevRPM = rpm;
-			//get number of timer B counts since last off/on transition
-			tdcPeriodCount = pCountBTemp - prevTDCCount;
-			//starting point for calculating the next period
-			prevTDCCount = pCountBTemp;
-
-         //handle missed reflector hits or extra noise hit:
-         //compare the period time with the previous value -- if greater than
-         //10% difference, then ignore the new value and use a value 5%
-         //more or less than the old value depending on whether the new value
-         //is smaller or larger than the old value -- thus a missed hit will
-         //usually be 100% different and will be corrected, but if the rotation
-         //is slowing down or speeding up intentionally, the period will be
-         //able to track it at 5% change for each reflector hit
-         //If a correction is made more than 10 times in a row, then no
-         //correction will be made -- this allows the value to catch up with
-         //the actual RPM in cases where it is ramping up or down quickly.
-
-         allowedRPMVariance = (long)(prevTDCPeriodCount * 0.1);
-
-         if (rpmCorrectionCount < 10 &&
-         		tdcPeriodCount > (prevTDCPeriodCount + allowedRPMVariance)){
-	         rpmCorrectionCount++; //count number of times corrected
-            tdcPeriodCount =
-            	prevTDCPeriodCount + (long)(prevTDCPeriodCount * 0.05);
-         }
-			else
-         if (rpmCorrectionCount < 10 &&
-         		tdcPeriodCount < (prevTDCPeriodCount - allowedRPMVariance)){
-	         rpmCorrectionCount++; //count number of times corrected
-         	tdcPeriodCount =
-	            prevTDCPeriodCount - (long)(prevTDCPeriodCount * 0.05);
-         }
-         else{
-         	rpmCorrectionCount = 0; //not corrected this time, so start over
-         }
-
-         prevTDCPeriodCount = tdcPeriodCount;
-
-      	//calculate RPM
-         if (tdcPeriodCount > 0)
-      		rpm = (int)((1.0 / (tdcPeriodCount * 0.0002857)) * 60.0);
-			else
-         	rpm = 0;
-
-         rpmVariance = rpm - prevRPM;
-
-			//active the track sync (increment pulse)
-         if((controlFlags & TRACK_PULSES_ENABLED) != 0){
-         	trackSyncPulseActive = TRUE;
-	         trackSyncPulseWidthCount = pCountBTemp + TRACK_SYNC_PULSE_WIDTH;
-   	      BitWrPortI(PCDR, &PCDRShadow, 0, TRACK_SYNC); //PC0 -- activate
-         }
-
-      }//if (!tdcDeglitched)
-
-   }//if (tdcOffReflector)
-   else{
-   	//TDC is on the reflector, check to see if it just went off
-    	if (tdcDeglitched){
-      	tdcOffReflector = TRUE;
-      }//if (tdcDeglitched)
-
-   }//else of if (tdcOffReflector)
-
-}//end of incrementTrackOnTDC
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// processTDC
-//
-// Processes input data from the TDC sensor.
-// Counts calls between changes to the input.
-//
-// Calls different functions to handle the TDC as configured by the host
-//
-// This function should be called approximately every third time the Timer B ISR
-// increments timerBCount.
-//
-
-void processTDC(long pCountBTemp)
-{
-
-	if((controlFlags & RABBIT_SEND_CLOCK_MARKERS) != 0){
-		resetTrackOnTDC(pCountBTemp);
-      }
-	else
-   if((controlFlags & RABBIT_SEND_TDC) != 0){
-   	incrementTrackOnTDC(pCountBTemp);
-      }
-
-}//end of processTDC
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// handleEndingOfPulses
-//
-// Turns off the track increment and the track reset pulses after the
-// appropriate time.
-//
-// Used for wall mapping.
-//
-
-void handleEndingOfPulses(long pCountBTemp)
-{
-
-   //if the sync reset pulse is active, count down until zero and deactivate
-	if ((trackSyncResetPulseActive == TRUE) &&
-	   							(pCountBTemp > trackSyncResetPulseWidthCount)){
-	   trackSyncResetPulseActive = FALSE;
-		BitWrPortI(PCDR, &PCDRShadow, 1, TRACK_SYNC_RESET); //PC2 -- deactivate
-
-	}
-
-   //if the track sync pulse is active, count down until zero and deactivate
-	if ((trackSyncPulseActive == TRUE) &&
-	   										(pCountBTemp > trackSyncPulseWidthCount)){
-	   trackSyncPulseActive = FALSE;
-   	BitWrPortI(PCDR, &PCDRShadow, 1, TRACK_SYNC); //PC0 -- deactivate
-
-	}
-
-}//end of handleEndingOfPulses
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// startTrackPulseEachPeriod
-//
-// Turns on the track increment pulse for each period.
-//
-// Other functions set up the period to trigger a pulse for each clock position
-// or can force a pulse to occur at a specific future time by setting
-// trackSyncPulseInactiveCount to the number of timer counts to delay. This
-// method is used to fire a pulse a while after the Track Reset line has been
-// driven low to clock the Reset pulse into the timers.
-//
-
-void startTrackPulseEachPeriod(long pCountBTemp)
-{
-   //the clock period count is the period between pulse starts
-   //when it times out, activate the sync pulse
-
-	if ((controlFlags & TRACK_PULSES_ENABLED) &&
-   								(pCountBTemp > trackSyncPulseInactiveCount)){
-
-      //set up to fire next period
-		trackSyncPulseInactiveCount = pCountBTemp + clockPeriodCount;
-
-      //set width of pulse and activate
-		trackSyncPulseActive = TRUE;
-   	trackSyncPulseWidthCount = pCountBTemp + TRACK_SYNC_PULSE_WIDTH;
-   	BitWrPortI(PCDR, &PCDRShadow, 0, TRACK_SYNC); //PC0 -- activate
-
-	}
-
-}//end of startTrackPulseEachPeriod
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// startTrackPulseAfterDelay
-//
-// Turns on the track increment pulse after a delay specified by the value
-// in trackSyncPulseInactiveCount. The pulse is not automatically repeated.
-//
-// Other functions can force a pulse to occur at a specific future time by
-// setting trackSyncPulseInactiveCount to the number of timer counts to delay.
-//
-// NOTE: This method is mainly used to fire a pulse delayed after the Track
-// Reset line has been driven low to clock the Reset pulse into the timers.
-//
-
-void startTrackPulseAfterDelay(long pCountBTemp)
-{
-
-   //when delay times out, activate the sync pulse
-	if (trackSyncPulseStartDelayCount != -1
-		   && pCountBTemp > trackSyncPulseStartDelayCount){
-
-      //set up to fire next period if enabled
-		trackSyncPulseInactiveCount = pCountBTemp + clockPeriodCount;
-
-   	//prevent pulse from automatically firing again
-		trackSyncPulseStartDelayCount = -1;
-		trackSyncPulseActive = TRUE;
-   	trackSyncPulseWidthCount = pCountBTemp + TRACK_SYNC_PULSE_WIDTH;
-   	BitWrPortI(PCDR, &PCDRShadow, 0, TRACK_SYNC); //PC0 -- activate
-
-	}
-
-}//end of startTrackPulseAfterDelay
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// handleTrackSyncAndResetLines
-//
-// Initiates and turns off the DSP track counter increment and reset pulses.
-//
-
-void handleTrackSyncAndResetLines(long pCountBTemp)
-{
-
-	if((controlFlags & RABBIT_SEND_CLOCK_MARKERS) != 0){
-		startTrackPulseEachPeriod(pCountBTemp);
-      }
-	else
-   if((controlFlags & RABBIT_SEND_TDC) != 0){
-
-      }
-
-	//if Host has requested a Track Sync Reset, invoke one here
-
-   if(resetPulseTrack){
-   	resetPulseTrack = FALSE;
-		//send Track counter reset pulse to all DSP boards
-      resetTrack(pCountBTemp);
-   }
-
-   //handle sync pulses required for reset clocking -- sync pulses for
-   //clock periods are handled elsewhere
-	startTrackPulseAfterDelay(pCountBTemp);
-
-   //end pulses at specified times
-   handleEndingOfPulses(pCountBTemp);
-
-}//end of handleTrackSyncAndResetLines
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -1770,10 +1076,6 @@ void countTimerBInts()
 	countBAccessFlag = 1; // block the ISR from modifying
 	countBTemp = timerBCount; //snag the interrupt counter to local variable
 	countBAccessFlag = 0; // unblock the ISR
-
-	processTDC(countBTemp);
-
-   handleTrackSyncAndResetLines(countBTemp);
 
 	//increment the tick counter approximately every .01 seconds
 	if (countBTemp - prevCountBTemp >= 35){
@@ -1852,18 +1154,6 @@ int startMonitor(tcp_Socket *socket, int pPktID)
 
    //initialize previous state of inputs to the current states
 
-   prevEnc1A = BitRdPortI(PADR, ENC1A);
-   prevEnc1B = BitRdPortI(PADR, ENC1B);
-   prevEnc2A = BitRdPortI(PADR, ENC2A);
-   prevEnc2B = BitRdPortI(PADR, ENC2B);
-   prevUnused1 = BitRdPortI(PADR, UNUSED1);
-   prevUnused2 = BitRdPortI(PADR, UNUSED2);
-   prevInspect = BitRdPortI(PADR, INSPECT);
-   prevUnused3 = BitRdPortI(PADR, UNUSED3);
-   prevTDC = BitRdPortI(PEDR, TDC);
-   prevUnused4 = BitRdPortI(PEDR, UNUSED4);
-   prevSlotAddr = ~(RdPortI(PBDR) | 0xfff0);
-   prevChassisAddr = ~((RdPortI(PBDR) >> 4) | 0xfff0 );
 
    sendMonitorPacket = TRUE; //force update first time through
 
@@ -1911,158 +1201,6 @@ int processMonitor(tcp_Socket *socket)
    char  buffer[25];
    int x = 0;
 
-   // PLC sends a high to drive the opto isolator - inverted to low to Rabbit
-   //
-   // PLC sends a high during Inspection - Rabbit reads low.
-   // PLC sends a high when Carriage on Pipe - Rabbit reads low.
-   // PLC sends a high when TDC marker is at TDC - Rabbit reads low.
-
-   //check all inputs, send new status if changed from previous state
-
-   //this part makes sure a quick transition gets transmitted to the host
-   //even if the host is requesting periodic updates which might miss the
-   //the event
-
-   //don't send packet for every change in encoder inputs as this would
-   //be too much data - if the encoders are turned slowly enough, the events
-   //can be seen by the host when requesting periodic updates
-
-   if (BitRdPortI(PADR, ENC1A) != prevEnc1A){
-      prevEnc1A = BitRdPortI(PADR, ENC1A);
-      //sendMonitorPacket = TRUE; don't transmit on change - see note above
-   }
-
-   if (BitRdPortI(PADR, ENC1B) != prevEnc1B){
-      prevEnc1B = BitRdPortI(PADR, ENC1B);
-      //sendMonitorPacket = TRUE; don't transmit on change - see note above
-   }
-
-   if (BitRdPortI(PADR, ENC2A) != prevEnc2A){
-      prevEnc2A = BitRdPortI(PADR, ENC2A);
-      //sendMonitorPacket = TRUE; don't transmit on change - see note above
-   }
-
-   if (BitRdPortI(PADR, ENC2B) != prevEnc2B){
-      prevEnc2B = BitRdPortI(PADR, ENC2B);
-      //sendMonitorPacket = TRUE; don't transmit on change - see note above
-   }
-
-   if (BitRdPortI(PADR, UNUSED1) != prevUnused1){
-      prevUnused1 = BitRdPortI(PADR, UNUSED1);
-      sendMonitorPacket = TRUE;
-   }
-
-   if (BitRdPortI(PADR, UNUSED2) != prevUnused2){
-      prevUnused2 = BitRdPortI(PADR, UNUSED2);
-      sendMonitorPacket = TRUE;
-   }
-
-   if (BitRdPortI(PADR, INSPECT) != prevInspect){
-      prevInspect = BitRdPortI(PADR, INSPECT);
-      sendMonitorPacket = TRUE;
-   }
-
-   if (BitRdPortI(PADR, UNUSED3) != prevUnused3){
-      prevUnused3 = BitRdPortI(PADR, UNUSED3);
-      sendMonitorPacket = TRUE;
-   }
-
-   if (BitRdPortI(PEDR, UNUSED4) != prevUnused4){
-      prevUnused4 = BitRdPortI(PBDR, UNUSED4);
-      sendMonitorPacket = TRUE;
-   }
-
-   //read the board's chassis and slot number from PortB which is connected to
-   //the rotary switches on the motherboard
-
-   // slot number is lower nibble of Port B inputs inverted
-   slotAddr = ~(RdPortI(PBDR) | 0xfff0);
-
-   if (slotAddr != prevSlotAddr){
-      prevSlotAddr = slotAddr;
-      sendMonitorPacket = TRUE;
-   }
-
-   // chassis number is upper nibble of Port B inputs inverted
-   chassisAddr = ~((RdPortI(PBDR) >> 4) | 0xfff0 );
-
-   if (chassisAddr != prevChassisAddr){
-      chassisAddr = chassisAddr;
-      sendMonitorPacket = TRUE;
-   }
-
-   if (sendMonitorPacket == TRUE){
-
-      x = 0;
-
-      if (BitRdPortI(PADR, ENC1A)) buffer[x++] = 0;
-      else buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, ENC1B)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, ENC2A)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, ENC2B)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, UNUSED1)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, UNUSED2)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, INSPECT)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, UNUSED3)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PEDR, TDC)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PEDR, UNUSED4)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      buffer[x++] = chassisAddr;
-
-      buffer[x++] = slotAddr;
-
-      buffer[x++] = inspectionStatus;
-
-      buffer[x++] = (rpm >> 8) & 0xff;
-      buffer[x++] = rpm & 0xff;
-
-      buffer[x++] = (rpmVariance >> 8) & 0xff;
-      buffer[x++] = rpmVariance & 0xff;
-
-      // retrieve the encoder count values
-      encAccessFlag = 1; // block the ISR from modifying
-      enc1CntTemp.lVal = encoder1Count; //snag the values to local variables
-      enc2CntTemp.lVal = encoder2Count;
-      encAccessFlag = 0; // unblock the ISR
-
-      //place the encoder 1 values into the buffer by byte, MSB first
-      buffer[x++] = enc1CntTemp.cVal[3];
-      buffer[x++] = enc1CntTemp.cVal[2];
-      buffer[x++] = enc1CntTemp.cVal[1];
-      buffer[x++] = enc1CntTemp.cVal[0];
-
-      //place the encoder 2 values into the buffer by byte, MSB first
-      buffer[x++] = enc2CntTemp.cVal[3];
-      buffer[x++] = enc2CntTemp.cVal[2];
-      buffer[x++] = enc2CntTemp.cVal[1];
-      buffer[x++] = enc2CntTemp.cVal[0];
-
-      //send the buffer to host
-      sendPacketHeader(socket, GET_MONITOR_PACKET_CMD);
-      sock_flushnext(socket);
-      sock_write(socket,buffer,x);
-
-   }// if (inputChanged == 1)
-
-   sendMonitorPacket = FALSE; //don't update again until change detected
 
    return(0);
 
@@ -2100,33 +1238,6 @@ int setControlFlags(tcp_Socket *pSocket, int pPktID)
    return(3); //return number of bytes read from socket
 
 }//end of setControlFlags
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// resetTrackCounters
-//
-// Resets all Track counters in the DSPs by pulsing the Track Sync Reset line.
-//
-// This will be ignored in certain modes such as those which already reset the
-// counters in response to other inputs.
-//
-
-int resetTrackCounters(tcp_Socket *socket, int pPktID)
-{
-
-   int x, result;
-   char buffer[2];
-
-   //read in the remainder of the packet
-   result = readBytesAndVerify(socket, buffer, 2, pPktID);
-   if (result < 0) return(result);
-
-   //trigger other code to pulse the reset line
-	resetPulseTrack = TRUE;
-
-   return(2); //return number of bytes read from socket
-
-}//end of resetTrackCounters
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -2171,128 +1282,6 @@ timerBISR::
 	ld	 	(timerBCount), jkhl
 
 skip1:
-
-	// if the access flag is 1, skip modifying counters as the non-ISR code
-	// is accessing the values -- should not miss a count as the ISR should
-   // be called often enough to get several hits off of each encoder change
-
-   ld    a, (encAccessFlag)
-	bit 	0,a
-	jp		NZ, done			; skip if flag is 1 (Zero flag = 0)
-
-/*
-;debug mks -- remove this
-	ld   	jkhl, (encoder1Count)
-	ld   	bcde, 1
-	add  	jkhl,bcde
-	ld	 	(encoder1Count), jkhl
-;debug mks -- end
-*/
-
-	// check for Encoder 1 movement
-
-	ld 	a,(prevEnc1)	; get the previous encoder A & B values
-	sla	a					; shift up two bits, zeroing lower two bits
-	sla	a
-   ld		b, a				; move old value to register b
-
-	ioi ld a, (0x0030)   ; load Port A
-	and	0x03				; only keep lower two bits (encoder A & B lines)
-
-   or		b					; combine old A & B with new A & B
-	ld    (prevEnc1), a	; store for next time
-
-   and	0x0f				; keep only lower nibble with old and new A & B
-
-   cp		0x02				; check for all new A & B / old A & B combinations
-	jp		z, inc1			;   which indicate forward rotation
-   cp		0x0b
-	jp		z, inc1
-   cp		0x0d
-	jp		z, inc1
-   cp		0x04
-	jp		z, inc1
-
-   cp		0x01				; check for all new A & B / old A & B combinations
-	jp		z, dec1			;   which indicate reverse rotation
-   cp		0x07
-	jp		z, dec1
-   cp		0x0e
-	jp		z, dec1
-   cp		0x08
-	jp		z, dec1
-
-   jp    doEnc2 			; all other combinations are illegal or indicate
-   							; no movement so do not adjust count
-
-inc1:	; increment the encoder count
-
-	ld   	jkhl, (encoder1Count)
-	ld   	bcde, 1
-	add  	jkhl,bcde
-	ld	 	(encoder1Count), jkhl
-   jp		doEnc2
-
-dec1:	; decrement the encoder count
-
-	ld   	jkhl, (encoder1Count)
-	ld   	bcde, 1
-	sub  	jkhl,bcde
-	ld	 	(encoder1Count), jkhl
-
-doEnc2:
-	// check for Encoder 2 movement
-
-	ld 	a,(prevEnc2)	; get the previous encoder A & B values
-	sla	a					; shift up two bits, zeroing lower two bits
-	sla	a
-   ld		b, a				; move old value to register b
-
-	ioi ld a, (0x0030)   ; load Port A
-   sra	a					; shift I/O bits 3 & 2 down to 1 & 0
-   sra	a					;  (encoder 2 A & B input on pins 3 & 2)
-	and	0x03				; only keep lower two bits (encoder A & B lines)
-
-   or		b					; combine old A & B with new A & B
-	ld    (prevEnc2), a	; store for next time
-
-   and	0x0f				; keep only lower nibble with old and new A & B
-
-   cp		0x02				; check for all new A & B / old A & B combinations
-	jp		z, inc2			;   which indicate forward rotation
-   cp		0x0b
-	jp		z, inc2
-   cp		0x0d
-	jp		z, inc2
-   cp		0x04
-	jp		z, inc2
-
-   cp		0x01				; check for all new A & B / old A & B combinations
-	jp		z, dec2			;   which indicate reverse rotation
-   cp		0x07
-	jp		z, dec2
-   cp		0x0e
-	jp		z, dec2
-   cp		0x08
-	jp		z, dec2
-
-   jp    done 				; all other combinations are illegal or indicate
-   							; no movement so do not adjust count
-
-inc2:	; increment the encoder count
-
-	ld   	jkhl, (encoder2Count)
-	ld   	bcde, 1
-	add  	jkhl,bcde
-	ld	 	(encoder2Count), jkhl
-   jp		done
-
-dec2:	; decrement the encoder count
-
-	ld   	jkhl, (encoder2Count)
-	ld   	bcde, 1
-	sub  	jkhl,bcde
-	ld	 	(encoder2Count), jkhl
 
 	// body of ISR ends here
 
@@ -2438,8 +1427,8 @@ void initRegisters()
    // don't set OUTPUT4 (PC7) or it will disrupt the debugger
    // put this back in when OUTPUT4 is changed to PC4 for board ver 1.2
    //BitWrPortI(PCDR, &PCDRShadow, 1, OUTPUT4); //PC7
-   BitWrPortI(PCDR, &PCDRShadow, 1, TRACK_SYNC); //PC0
-   BitWrPortI(PCDR, &PCDRShadow, 1, TRACK_SYNC_RESET); //PC2
+   //BitWrPortI(PCDR, &PCDRShadow, 1, TRACK_SYNC); //PC0
+   //BitWrPortI(PCDR, &PCDRShadow, 1, TRACK_SYNC_RESET); //PC2
    // don't set (PC6) or it will disrupt the debugger
    //BitWrPortI(PCDR, &PCDRShadow, 1, 6);
 
@@ -2504,8 +1493,8 @@ void initRegisters()
 
    // inactivate the Pulse sync triggers
 
-   BitWrPortI(PEDR, &PEDRShadow, 1, PULSE_SYNC);
-   BitWrPortI(PEDR, &PEDRShadow, 1, PULSE_SYNC_RESET);
+   //BitWrPortI(PEDR, &PEDRShadow, 1, PULSE_SYNC);
+   //BitWrPortI(PEDR, &PEDRShadow, 1, PULSE_SYNC_RESET);
 
 }//end of initRegisters
 //----------------------------------------------------------------------------
@@ -2951,9 +1940,6 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
    else
    if (pktID == STOP_MONITOR_CMD) return stopMonitor(socket, pktID);
    else
-   // set encoder counts to 0
-   if (pktID == ZERO_ENCODERS_CMD) return zeroEncoderCounts(socket, pktID);
-   else
    // pulse the specified output(s)
    if (pktID == PULSE_OUTPUT_CMD) return pulseOutput(socket, pktID);
    else
@@ -2980,12 +1966,6 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
       return receiveAndInstallNewFirmware(socket, pktID);
 	else
    if (pktID == SET_CONTROL_FLAGS_CMD) return setControlFlags(socket, pktID);
-   else
-   if (pktID == RESET_TRACK_COUNTERS_CMD)
-   	return resetTrackCounters(socket, pktID);
-	else
-   if (pktID == GET_ALL_ENCODER_VALUES_CMD)
-      return getAllEncoderValues(socket, pktID);
 
    return 0;
 
@@ -3018,11 +1998,6 @@ main()
    timerBCount = 0;
    countBAccessFlag = 0;
 
-   //init encoder variables
-   encoder1Count = 0;
-   encoder2Count = 0;
-   encAccessFlag = 0;
-
    // initialize I/O pins
    //brdInit();  -- DO NOT CALL brdInit - not a good config for Capulin --
 
@@ -3048,11 +2023,18 @@ main()
 
       //debug mks
 
-      ch = 33;
+      printf("\nSending packet to Master PIC...\n");
 
-      printf("\nSending byte to Master PIC: %02x\n", ch);
+      sendBytesViaSerialPortD(6, 0x55, 0xaa, 0x03, 0x01, 0x02, 0xfd);
+      sendBytesViaSerialPortD(6, 0x55, 0xaa, 0x03, 0x02, 0x03, 0xfb);
+      sendBytesViaSerialPortD(6, 0x55, 0xaa, 0x03, 0x03, 0x04, 0xf9);
 
-      serXputc(SER_PORT_D, ch);
+//      serXputc(SER_PORT_D, 0x55);
+//      serXputc(SER_PORT_D, 0xaa);
+//      serXputc(SER_PORT_D, 0x03);
+//      serXputc(SER_PORT_D, 0x01);
+//      serXputc(SER_PORT_D, 0x02);
+//      serXputc(SER_PORT_D, 0xfd);
 
       //debug mks end
 
