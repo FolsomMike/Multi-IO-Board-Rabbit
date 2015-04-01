@@ -255,25 +255,10 @@ long prevEnc1Cnt, prevEnc2Cnt;
 //These should match the values in the host code.
 
 #define NO_ACTION 0
-#define GET_INSPECT_PACKET_CMD 1
-#define ZERO_ENCODERS_CMD 2
-#define GET_MONITOR_PACKET_CMD 3
-#define PULSE_OUTPUT_CMD 4
-#define TURN_ON_OUTPUT_CMD 5
-#define TURN_OFF_OUTPUT_CMD 6
-#define SET_ENCODERS_DELTA_TRIGGER_CMD 7
-#define START_INSPECT_CMD 8
-#define STOP_INSPECT_CMD 9
-#define START_MONITOR_CMD 10
-#define STOP_MONITOR_CMD 11
-#define GET_STATUS_CMD 12
-#define LOAD_FIRMWARE_CMD 13
-#define SEND_DATA_CMD 14
-#define DATA_CMD 15
-#define GET_CHASSIS_SLOT_ADDRESS_CMD 16
-#define SET_CONTROL_FLAGS_CMD 17
-#define RESET_TRACK_COUNTERS_CMD 18
-#define GET_ALL_ENCODER_VALUES_CMD 19
+#define GET_ALL_STATUS_CMD 1
+#define LOAD_FIRMWARE_CMD 2
+#define DATA_CMD 3
+#define SEND_DATA_CMD 4
 
 #define ERROR 125
 #define DEBUG_CMD 126
@@ -685,7 +670,7 @@ void sendPacketHeader(tcp_Socket *socket, char pPacketID)
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// getStatus
+// handleGetAllStatusCommand
 //
 // Sends the status byte via socket.  The status byte tells the state of the
 // system.
@@ -695,10 +680,10 @@ void sendPacketHeader(tcp_Socket *socket, char pPacketID)
 // the code is changed to return whatever value is of interest.
 //
 
-int getStatus(tcp_Socket *socket, int pPktID)
+int handleGetAllStatusCommand(tcp_Socket *socket, int pPktID)
 {
 
-   char buffer[1];
+   char buffer[2];
    int result;
    int debugValue;
 
@@ -710,15 +695,15 @@ int getStatus(tcp_Socket *socket, int pPktID)
 	debugValue = globalDebug & 0xff;
 
    //read in the remainder of the packet
-   result = readBytesAndVerify(socket, buffer, 1, pPktID);
+   result = readBytesAndVerify(socket, buffer, 2, pPktID);
    if (result < 0) return(result);
 
-   sendPacketHeader(socket, GET_STATUS_CMD);
+   sendPacketHeader(socket, GET_ALL_STATUS_CMD);
    send2Bytes(socket, systemStatus, debugValue);
 
-   return(1); //return number of bytes read from socket
+   return(result); //return number of bytes read from socket
 
-}//end of getStatus
+}//end of handleGetAllStatusCommand
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -914,7 +899,7 @@ int sendInspectPacket(tcp_Socket *socket)
    int x = 0;
    char controlFlags;
 
-   sendPacketHeader(socket, GET_INSPECT_PACKET_CMD);
+   sendPacketHeader(socket, 0 /*GET_INSPECT_PACKET_CMD*/);
 
    //send the packet count back to the host, MSB followed by LSB
    buffer[x++] = (inspectPacketCount >> 8) & 0xff;
@@ -1932,40 +1917,11 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
    pktID = pktBuffer[0];
 
    // return the status byte which tells the state of the system
-   if (pktID == GET_STATUS_CMD) return getStatus(socket, pktID);
-   else
-   if (pktID == GET_INSPECT_PACKET_CMD) return getInspectPacket(socket, pktID);
-   else
-   if (pktID == START_MONITOR_CMD) return startMonitor(socket, pktID);
-   else
-   if (pktID == STOP_MONITOR_CMD) return stopMonitor(socket, pktID);
-   else
-   // pulse the specified output(s)
-   if (pktID == PULSE_OUTPUT_CMD) return pulseOutput(socket, pktID);
-   else
-   // turn on the specified output(s)
-   if (pktID == TURN_ON_OUTPUT_CMD) return turnOnOutput(socket, pktID);
-   else
-   // turn off the specified output(s)
-   if (pktID == TURN_OFF_OUTPUT_CMD) return turnOffOutput(socket, pktID);
-   else
-   // set the number of encoder count change to trigger update to host
-   if (pktID == SET_ENCODERS_DELTA_TRIGGER_CMD)
-      return setEncodersDeltaTrigger(socket, pktID);
-   else
-   // enter inspection mode
-   if (pktID == START_INSPECT_CMD)  return startInspect(socket, pktID);
-   else
-   // exit inspection mode
-   if (pktID == STOP_INSPECT_CMD) return stopInspect(socket, pktID);
-   else
-   // force a monitor packet to be sent to the host
-   if (pktID == GET_MONITOR_PACKET_CMD) return getMonitorPacket(socket, pktID);
-   else
+   if (pktID == GET_ALL_STATUS_CMD)
+   	return handleGetAllStatusCommand(socket, pktID);
+	else
    if (pktID == LOAD_FIRMWARE_CMD)
       return receiveAndInstallNewFirmware(socket, pktID);
-	else
-   if (pktID == SET_CONTROL_FLAGS_CMD) return setControlFlags(socket, pktID);
 
    return 0;
 
