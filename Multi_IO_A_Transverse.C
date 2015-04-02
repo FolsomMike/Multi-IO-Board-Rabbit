@@ -253,8 +253,7 @@ long prevEnc1Cnt, prevEnc2Cnt;
 // end of Global Variables for processInspect Function
 //----------------------------------------------------------------------------
 
-// Command definitions from Host
-//These should match the values in the host code.
+// command definitions for Host to Rabbit packets
 
 #define NO_ACTION 0
 #define GET_ALL_STATUS_CMD 1
@@ -267,6 +266,12 @@ long prevEnc1Cnt, prevEnc2Cnt;
 #define EXIT_CMD 127
 
 #define NO_STATUS 0
+
+
+// command definitions for Rabbit to Master PIC packets
+
+#define RBT_GET_ALL_STATUS 0
+#define RBT_GET_SLAVE_PEAK_DATA 1
 
 //----------------------------------------------------------------------------
 // sendBytesViaSerialPortD
@@ -357,6 +362,53 @@ void sendPacketViaSocket(tcp_Socket *pSocket, char pCommand, int pNumArgs, ...)
    va_end(valist);   // clean memory reserved for valist
 
 }//end of Device::sendPacketViaSocket
+//-----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
+// Device::sendPacketViaSerialPortD
+//
+// Sends a packet via Serial Port D with command code pCommand followed by a
+// variable number of bytes (one or more) to the remote device,
+//
+// A header is prepended and a checksum byte appended. The checksum includes
+// the command byte and all bytes in the argument list, but not the header
+// bytes.
+//
+
+void sendPacketViaSerialPortD(char pCommand, int pNumArgs, ...)
+
+{
+
+	int val = 0, i, sum, checksum;
+   va_list valist;
+
+   va_start(valist, pNumArgs); // initialize valist to hold the arguments
+
+   serXwrite(SER_PORT_D, hostPktHeader, 2); //header only first 2 bytes for PIC
+
+	serXputc(SER_PORT_D, pNumArgs + 2); //packet length - add 2 for command byte
+   												//and checksum byte
+
+   serXputc(SER_PORT_D, pCommand);  //send packet ID
+
+   sum = pCommand;        //command byte included in checksum
+
+   for(i=0; i<pNumArgs; i++){
+		val = va_arg(valist, int);
+      serXputc(SER_PORT_D, val);
+      sum += val;
+   }
+
+   //calculate checksum and send it
+   checksum = (byte)(0x100 - (byte)(sum & 0xff));
+   serXputc(SER_PORT_D, checksum);
+
+	//don't flush serial port -- documentation says that clears the buffer
+	//without sending, unlike for socket where it forces buffer to be sent
+
+   va_end(valist);   // clean memory reserved for valist
+
+}//end of Device::sendPacketViaSerialPortD
 //-----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -2049,16 +2101,8 @@ main()
 
       printf("\nSending packet to Master PIC...\n");
 
-      sendBytesViaSerialPortD(6, 0x55, 0xaa, 0x03, 0x01, 0x02, 0xfd);
-      sendBytesViaSerialPortD(6, 0x55, 0xaa, 0x03, 0x02, 0x03, 0xfb);
-      sendBytesViaSerialPortD(6, 0x55, 0xaa, 0x03, 0x03, 0x04, 0xf9);
-
-//      serXputc(SER_PORT_D, 0x55);
-//      serXputc(SER_PORT_D, 0xaa);
-//      serXputc(SER_PORT_D, 0x03);
-//      serXputc(SER_PORT_D, 0x01);
-//      serXputc(SER_PORT_D, 0x02);
-//      serXputc(SER_PORT_D, 0xfd);
+      sendPacketViaSerialPortD(RBT_GET_ALL_STATUS, 1, 0);
+      sendPacketViaSerialPortD(RBT_GET_SLAVE_PEAK_DATA, 1, 0);
 
       //debug mks end
 
