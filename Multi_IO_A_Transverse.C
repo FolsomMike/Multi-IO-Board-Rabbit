@@ -191,6 +191,8 @@ int reSynced, reSyncCount, reSyncPktID;
 int pktError; //ethernet : wrong size, checksum error, execution error
 int spDError; //serial port D : wrong size, checksum error, execution error
 
+char hostPktHeader[4] = {0xaa, 0x55, 0xbb, 0x66};
+
 unsigned timerb_match; // match value
 long timerBCount; //incremented with each timerb interrupt
 long prevCountBTemp;
@@ -282,9 +284,7 @@ void sendBytesViaSerialPortD(int pNumArgs,...)
 
    // send bytes via serial port
 
-   for (i = 0; i < pNumArgs; i++){
-      serXputc(SER_PORT_D, va_arg(valist, int));
-   }
+   for (i = 0; i < pNumArgs; i++){ serXputc(SER_PORT_D, va_arg(valist, int)); }
 
    va_end(valist);	// clean memory reserved for valist
 
@@ -292,18 +292,86 @@ void sendBytesViaSerialPortD(int pNumArgs,...)
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
+// sendBytesViaSocket
+//
+// Sends bytes via pSocket.
+//
+
+void sendBytesViaSocket(tcp_Socket *pSocket, int pNumArgs, ...)
+{
+
+   int i;
+   va_list valist;
+
+   va_start(valist, pNumArgs); // initialize valist to hold the arguments
+
+   // send bytes via serial port
+
+   for (i = 0; i < pNumArgs; i++){ sock_putc(pSocket, va_arg(valist, int)); }
+
+   sock_flush(pSocket);
+
+   va_end(valist);	// clean memory reserved for valist
+
+}//end of sendBytesViaSocket
+//----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
+// Device::sendPacketViaSocket
+//
+// Sends a packet via pSocket with command code pCommand followed by a variable
+//  number of bytes (one or more) to the remote device,
+//
+// A header is prepended and a checksum byte appended. The checksum includes
+// the command byte and all bytes in the argument list, but not the header
+// bytes.
+//
+
+void sendPacketViaSocket(tcp_Socket *pSocket, char pCommand, int pNumArgs, ...)
+
+{
+
+	int val = 0, i, sum, checksum;
+   va_list valist;
+
+   va_start(valist, pNumArgs); // initialize valist to hold the arguments
+
+	sock_write(pSocket, hostPktHeader, 4); //send header
+
+   sock_putc(pSocket, pCommand); //send packet ID
+
+   sum = pCommand;        //command byte included in checksum
+
+   for(i=0; i<pNumArgs; i++){
+		val = va_arg(valist, int);
+      sock_putc(pSocket, val);
+      sum += val;
+   }
+
+   //calculate checksum and send it
+   checksum = (byte)(0x100 - (byte)(sum & 0xff));
+	sock_putc(pSocket, checksum);
+
+   sock_flush(pSocket);
+
+   va_end(valist);   // clean memory reserved for valist
+
+}//end of Device::sendPacketViaSocket
+//-----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
 // send2Bytes
 //
 // Sends two bytes via the specified socket.
 //
 
-void send2Bytes(tcp_Socket *socket, char byte1, char byte2)
+void send2Bytes(tcp_Socket *pSocket, char pByte1, char pByte2)
 {
 
 	char buffer[2];
-	buffer[0] = byte1; buffer[1] = byte2;
-	sock_flushnext(socket);
-	sock_write(socket, buffer, 2);
+	buffer[0] = pByte1; buffer[1] = pByte2;
+	sock_flushnext(pSocket);
+	sock_write(pSocket, buffer, 2);
 
 }//end of send2Bytes
 //----------------------------------------------------------------------------
@@ -314,13 +382,13 @@ void send2Bytes(tcp_Socket *socket, char byte1, char byte2)
 // Sends three bytes via the specified socket.
 //
 
-void send3Bytes(tcp_Socket *socket, char byte1, char byte2, char byte3)
+void send3Bytes(tcp_Socket *pSocket, char pByte1, char pByte2, char pByte3)
 {
 
 	char buffer[3];
-	buffer[0] = byte1; buffer[1] = byte2; buffer[2] = byte3;
-	sock_flushnext(socket);
-	sock_write(socket, buffer, 3);
+	buffer[0] = pByte1; buffer[1] = pByte2; buffer[2] = pByte3;
+	sock_flushnext(pSocket);
+	sock_write(psocket, buffer, 3);
 
 }//end of send3Bytes
 //----------------------------------------------------------------------------
@@ -672,7 +740,7 @@ void sendPacketHeader(tcp_Socket *socket, char pPacketID)
 //----------------------------------------------------------------------------
 // handleGetAllStatusCommand
 //
-// Sends the status byte via socket.  The status byte tells the state of the
+// Sends the status byte via pSocket.  The status byte tells the state of the
 // system.
 //
 // The value is sent back to the host via the socket in a 2 byte packet.  The
@@ -680,7 +748,7 @@ void sendPacketHeader(tcp_Socket *socket, char pPacketID)
 // the code is changed to return whatever value is of interest.
 //
 
-int handleGetAllStatusCommand(tcp_Socket *socket, int pPktID)
+int handleGetAllStatusCommand(tcp_Socket *pSocket, int pPktID)
 {
 
    char buffer[2];
@@ -695,11 +763,11 @@ int handleGetAllStatusCommand(tcp_Socket *socket, int pPktID)
 	debugValue = globalDebug & 0xff;
 
    //read in the remainder of the packet
-   result = readBytesAndVerify(socket, buffer, 2, pPktID);
+   result = readBytesAndVerify(pSocket, buffer, 2, pPktID);
    if (result < 0) return(result);
 
-   sendPacketHeader(socket, GET_ALL_STATUS_CMD);
-   send2Bytes(socket, systemStatus, debugValue);
+   sendPacketViaSocket(pSocket, pPktID,
+   										 12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13);
 
    return(result); //return number of bytes read from socket
 
