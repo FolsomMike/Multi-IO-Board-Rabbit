@@ -2268,13 +2268,6 @@ main()
 
       printf("\nWaiting for command...\n");
 
-      //debug mks
-
-//      printf("\nSending packet to Master PIC...\n");
-
-      //debug mks end
-
-
       //this is the main processing loop
 
       do{
@@ -2305,7 +2298,7 @@ main()
 
    }//while (1)
 
-   //printf("Command received: %d\n", buffer[0]); //debug mks
+   //printf("Command received: %d\n", buffer[0]);
 
 }//end of main
 //----------------------------------------------------------------------------
