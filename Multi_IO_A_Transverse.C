@@ -184,12 +184,17 @@ char systemStatus = 0;
 
 unsigned int globalDebug = 0x1234;
 
+//ethernet socket variables
+int reSynced = FALSE, reSyncCount = 0, reSyncPktID = 0;
 char pktID;
+int pktError = 0; //ethernet : wrong size, checksum error, execution error
 
-int reSynced, reSyncCount, reSyncPktID;
+//serial port variables
+int reSyncedSP = FALSE, reSyncSPCount = 0, reSyncSPPktID = 0;
+int pktSPID;
+int pktSPError = 0; //serial port : wrong size, checksum error, execution error
 
-int pktError; //ethernet : wrong size, checksum error, execution error
-int spDError; //serial port D : wrong size, checksum error, execution error
+int masterPICPktChecksum = 0;
 
 char hostPktHeader[4] = {0xaa, 0x55, 0xbb, 0x66};
 
@@ -270,8 +275,9 @@ long prevEnc1Cnt, prevEnc2Cnt;
 
 // command definitions for Rabbit to Master PIC packets
 
-#define RBT_GET_ALL_STATUS 0
-#define RBT_GET_SLAVE_PEAK_DATA 1
+#define RBT_NO_ACTION EQU 0
+#define RBT_GET_ALL_STATUS 1
+#define RBT_GET_SLAVE_PEAK_DATA 2
 
 //----------------------------------------------------------------------------
 // sendBytesViaSerialPortD
@@ -476,7 +482,7 @@ void send2BytesUDP(
 //
 // Returns the number of bytes read.
 // On checksum error, returns -1.
-// If pNumBytes cannot be read, returns -2.
+// If pNumBytes number of bytes cannot be read, returns -2.
 //
 
 int readBytesAndVerify(tcp_Socket *pSocket, char *pBuffer, int pNumBytes,
@@ -503,6 +509,50 @@ int readBytesAndVerify(tcp_Socket *pSocket, char *pBuffer, int pNumBytes,
 	   return(bytesRead);
 
 }//end of readBytesAndVerify
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// readBytesAndVerifySP
+//
+// Attempts to read pPktLength number of bytes from serial port into pBuffer and
+// verifies the data using the last byte as a checksum.
+//
+// Note: pPktLength should include the data bytes AND the checksum byte.
+//
+// The packet ID should be provided via pPktID -- it is only used to verify the
+// checksum as it is included in that calculation by the host.
+//
+// Returns the number of bytes read.
+// On checksum error, returns -1.
+// If pPktLength number of bytes cannot be read, returns -2.
+//
+
+int readBytesAndVerifySP(int pPktLength, int pPktID, char *pBuffer)
+{
+
+	int i, bytesRead;
+   int checksum = 0;
+
+   bytesRead = serXread(SER_PORT_D, pBuffer, pPktLength, 5);
+
+   if (bytesRead != pPktLength) { return(-2); }
+
+   //validate checksum by summing the packet id and all data along with the
+   //checksum byte
+
+	for(i = 0; i < pPktLength; i++){
+
+   	checksum += pBuffer[i];
+
+		printf("Byte from Serial Port D: %d %02x\n", i, pBuffer[i]); //debug mks
+   }
+
+		printf("checksum: %04x\n", pPktID + checksum );//debug mks
+
+   if ( ((pPktID + checksum) & 0xff) != 0) { return(-1); }
+   else{ return(bytesRead); }
+
+}//end of readBytesAndVerifySP
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -790,33 +840,56 @@ void sendPacketHeader(tcp_Socket *socket, char pPacketID)
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// handleGetAllStatusCommand
+// handleGetAllStatusRbtCommand
 //
-// Sends the status byte via pSocket.  The status byte tells the state of the
-// system.
+// Queries the Master PIC which then queries all Slave PICs for various
+// status information.
 //
-// The value is sent back to the host via the socket in a 2 byte packet.  The
-// first byte will be the value, the second byte is used for  debugging --
-// the code is changed to return whatever value is of interest.
+// When the Master PIC returns the data, it is handled by
+//  handleGetAllStatusPICCommand, where it is transmitted along with the Rabbit
+// status info back to the host.
 //
 
-int handleGetAllStatusCommand(tcp_Socket *pSocket, int pPktID)
+int handleGetAllStatusRbtCommand(tcp_Socket *pSocket, int pPktID)
 {
 
-   char buffer[2];
+	int ch;
+
+   printf("\nhandleGetAllStatusRbtCommand...\n\n"); //debug mks
+
+   ch = serXgetc(SER_PORT_D); //get the checksum byte
+
+	sendPacketViaSerialPortD(RBT_GET_ALL_STATUS, 1, 0);
+
+   return(1); //return number of bytes read from socket
+
+}//end of handleGetAllStatusRbtCommand
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// handleGetAllStatusPICCommand
+//
+// Combines the status data in the received packet with status data for the
+// Rabbit and transmits it to the host via pSocket.
+//
+
+int handleGetAllStatusPICCommand(
+	 									tcp_Socket *pSocket, int pPktLength, int pPktID)
+{
+
+   char buffer[120];
    int result;
    int debugValue;
 
-   //return any value of interest via debugValue
-	// example: debugValue = (controlFlags >> 8) & 0xff;
-   // example: debugValue = controlFlags & 0xff;
-   //  or any other 8 bit value can be returned
+   int ch;
 
-	debugValue = globalDebug & 0xff;
+   printf("\nhandleGetAllStatusPICCommand...\n\n"); //debug mks
 
-   //read in the remainder of the packet
-   result = readBytesAndVerify(pSocket, buffer, 2, pPktID);
-   if (result < 0) return(result);
+   //read in the remainder of the packet, subtract 1 because command byte
+   //already read by calling function
+
+   result = readBytesAndVerifySP(pPktLength-1, pPktID, buffer);
+	if (result < 0){ return(result); }
 
    sendPacketViaSocket(pSocket, pPktID, 32,
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -826,7 +899,7 @@ int handleGetAllStatusCommand(tcp_Socket *pSocket, int pPktID)
 
    return(result); //return number of bytes read from socket
 
-}//end of handleGetAllStatusCommand
+}//end of handleGetAllStatusPICCommand
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -1453,7 +1526,7 @@ void setupTimerBInt()
    WrPortI(TBL1R, NULL, 0);
 
    // enable timer B and Match1 interrupts
-   WrPortI(TBCSR, &TBCSRShadow, TBCSR_INT_MATCH1 | TBCSR_MAIN_CLK_ENA);
+	WrPortI(TBCSR, &TBCSRShadow, TBCSR_INT_MATCH1 | TBCSR_MAIN_CLK_ENA);
 
 }//end of setupTimerBInt
 //----------------------------------------------------------------------------
@@ -1873,6 +1946,49 @@ void waitForHostTCPIPConnection(tcp_Socket *socket)
 //----------------------------------------------------------------------------
 
 //-----------------------------------------------------------------------------
+// reSyncSP
+//
+// Resyncs Serial Port D.
+//
+// Clears bytes from the serial port buffer until 0xaa byte reached which
+// signals the *possible* start of a new valid packet header or until the
+// buffer is empty.
+//
+// If an 0xaa byte is found, the flag reSyncedSP is set true so that other
+// functions will know that an 0xaa byte has already been removed from the
+// stream, signalling the possible start of a new packet header.
+//
+
+void reSyncSP()
+{
+
+	int ch, numBytes;
+
+   reSyncedSP = FALSE;
+
+   //track the number of time this function is called, even if a resync is not
+   //successful - this will track the number of sync errors
+   reSyncSPCount++;
+
+   //store info pertaining to what caused the reSync - these values will be
+   //overwritten by the next reSync, so they only reflect the last error
+   //NOTE: when a reSync occurs, these values are left over from the PREVIOUS
+   // packet, so they indicate what PRECEDED the sync error.
+
+   reSyncSPPktID = pktSPID;
+
+   while ((numBytes = serXrdUsed(SER_PORT_D)) > 0) {
+		ch = serXgetc(SER_PORT_D);
+
+		printf("num bytes, byte: %d,%02x\n", numBytes, ch );//debug mks
+
+   	if (ch == (byte)0xaa) {reSyncedSP = TRUE; break;}
+   }
+
+}//end of reSyncSP
+//-----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
 // processSerialPortDData
 //
 // This function should be called often to allow processing of data packets
@@ -1880,20 +1996,19 @@ void waitForHostTCPIPConnection(tcp_Socket *socket)
 //
 // On the Multi-IO boards, Serial Port D is the link to the master PIC chip.
 //
-// All packets received from should begin with 0xaa, 0x55, 0xbb, 0x66, followed
-// by the packet identifier/command.  This is followed by the packet data and
-// a checksum which includes all packet data and the packet identifier/command.
-// When the packet data and packet identifier are added to the checksum, the
-//  result should be zero.
+// All packets received should begin with 0xaa, 0x55 followed by the packet
+// length byte and the packet identifier/command.  This is followed by
+// the packet data and a checksum which includes all packet data and the packet
+// identifier/command but not the two header bytes and the length byte.
 //
 // If pWaitForPkt is true, the function will wait until data is available.
 //
 // Returns number of bytes retrieved from the port, not including the
-// 4 header bytes and the packet ID. Thus, if a non-zero value is returned, a
-// packet was processed.  If zero is returned, some bytes may have been read
-// but a packet was not successfully processed due to missing bytes or header
-// corruption.  Some functions simply return 1 if the number of bytes read
-// is inconsequential.
+// 2 header bytes, the length byte, and the packet ID. Thus, if a non-zero
+// value is returned, a packet was processed.  If zero is returned, some bytes
+// may have been read but a packet was not successfully processed due to missing
+// bytes or header corruption.  Some functions simply return 1 if the number of
+// bytes read is inconsequential.
 //
 // If the function returns -1, then some bytes may have been read but a
 // complete packet and command were not read and executed fully.  It is
@@ -1903,24 +2018,69 @@ void waitForHostTCPIPConnection(tcp_Socket *socket)
 // It is up to the target function to perform an optional verification of the
 // checksum.
 //
+// Data may be transmitted back to the host via pSocket.
+//
 
-int processSerialPortDData(int pWaitForPkt)
+int processSerialPortDData(tcp_Socket *pSocket, int pWaitForPkt)
 {
 
-	int numBytes, ch;
+	int numBytes, ch, pktSPLength, result;
 
    //wait for a packet if parameter is true
-   if (pWaitForPkt){while(serXrdUsed(SER_PORT_D) < 5){}}
+   if (pWaitForPkt){while(serXrdUsed(SER_PORT_D) < 4){}}
 
-   //wait until 5 bytes are available - this should be the 4 header bytes, and
-   //the packet identifier/command
-   if ((numBytes = serXrdUsed(SER_PORT_D)) < 1) return 0; //debug mks change this from 1 to 5 or ???
+   //wait until 4 bytes are available - this should be the 2 header bytes, the
+   //packet length byte, and the packet identifier/command byte
+   if ((numBytes = serXrdUsed(SER_PORT_D)) < 4) return 0;
 
-//   int serXread( void * data, int length, unsigned long tmout );
+   //read the bytes in one at a time so that if an invalid byte is encountered
+   //it won't corrupt the next valid sequence in the case where it occurs
+   //within 2 bytes of the invalid byte
 
-   ch = serXgetc(SER_PORT_D);
+   //check each byte to see if the first two create a valid header
+   //if not, jump to resync which deletes bytes until a valid first header
+   //byte is reached
 
-	printf("Byte from Serial Port D: %02x\n", ch);
+   //if the reSynced flag is true, the buffer has been resynced and an 0xaa
+   //byte has already been read from the buffer so it shouldn't be read again
+
+   //after a resync, the function exits without processing any packets
+
+   if (!reSyncedSP){
+       //look for the 0xaa byte unless buffer just resynced
+       ch = serXgetc(SER_PORT_D);
+       if (ch != (byte)0xaa) {
+
+		 printf("num bytes, byte (aa): %d,%02x\n", numBytes, ch );//debug mks
+
+       reSyncSP(); return 0;}
+   }
+   else{ reSyncedSP = FALSE; }
+
+	ch = serXgetc(SER_PORT_D);
+   if (ch != (byte)0x55) {
+
+		 printf("num bytes, byte(55): %d,%02x\n", numBytes, ch );//debug mks
+
+   	reSyncSP(); return 0;}
+
+   //read and store in the packet length byte
+   pktSPLength = serXgetc(SER_PORT_D);
+	//read and store the packet identifier/command byte
+	pktSPID = serXgetc(SER_PORT_D);
+
+   // execute the function appropriate for the identifier/command byte
+
+   if (pktSPID == GET_ALL_STATUS_CMD){
+   	result = handleGetAllStatusPICCommand(pSocket, pktSPLength, pktSPID);
+   	printf("result: %d\n\n", result); //debug mks
+      return(result);
+      }
+//	else
+//   if (pktSPID == LOAD_FIRMWARE_CMD)
+//      return receiveAndInstallNewFirmware(socket, pktID);
+
+   return 0;
 
 }//end of processSerialPortDData
 //-----------------------------------------------------------------------------
@@ -1932,7 +2092,7 @@ int processSerialPortDData(int pWaitForPkt)
 // the *possible* start of a new valid packet header or until the buffer is
 // empty.
 //
-// If an 0xaa byte is found, the flag reSynced is set true to that other
+// If an 0xaa byte is found, the flag reSynced is set true so that other
 // functions will know that an 0xaa byte has already been removed from the
 // stream, signalling the possible start of a new packet header.
 //
@@ -2039,9 +2199,9 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
    //store the ID of the packet (the packet type)
    pktID = pktBuffer[0];
 
-   // return the status byte which tells the state of the system
+   // execute the function appropriate for the identifier/command byte
    if (pktID == GET_ALL_STATUS_CMD)
-   	return handleGetAllStatusCommand(socket, pktID);
+   	return handleGetAllStatusRbtCommand(socket, pktID);
 	else
    if (pktID == LOAD_FIRMWARE_CMD)
       return receiveAndInstallNewFirmware(socket, pktID);
@@ -2064,9 +2224,15 @@ main()
    //TCPIP variables
    tcp_Socket socket;
 
-	controlFlags = 0;
-   reSyncCount = 0; reSyncPktID = 0; reSynced = FALSE;
-   pktError = 0; spDError = 0;
+   controlFlags = 0;
+
+   //initialize ethernet variables
+   reSynced = FALSE; reSyncCount = 0; reSyncPktID = 0;
+   pktError = 0;
+
+   //initialize serial port D variables
+	reSyncedSP = FALSE; reSyncSPCount = 0; reSyncSPPktID = 0;
+	pktSPError = 0;
 
    output1State = FALSE, output1Timer = 0;
    output2State = FALSE, output2Timer = 0;
@@ -2084,8 +2250,10 @@ main()
 
    setupSerialPortD();
 
+   ch = serXrdUsed(SER_PORT_D);
+
    // setup all registers and I/O ports
-//debug mks   initRegisters();
+	//initRegisters();
 
    // setup the Timber B interrupt and install the Interrupt Service Routine
    // to track the encoder inputs
@@ -2102,10 +2270,7 @@ main()
 
       //debug mks
 
-      printf("\nSending packet to Master PIC...\n");
-
-      sendPacketViaSerialPortD(RBT_GET_ALL_STATUS, 1, 0);
-      sendPacketViaSerialPortD(RBT_GET_SLAVE_PEAK_DATA, 1, 0);
+//      printf("\nSending packet to Master PIC...\n");
 
       //debug mks end
 
@@ -2123,7 +2288,7 @@ main()
 
          if (processEthernetData(&socket, FALSE) == -1) pktError++;
 
-			if (processSerialPortDData(FALSE) == -1) spDError++;
+			if (processSerialPortDData(&socket, FALSE) == -1) pktSPError++;
 
          //process events timed with timer B
          countTimerBInts();
