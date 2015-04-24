@@ -30,6 +30,9 @@
 //Change this number when the code is changed.
 #define VERSION "1.0"
 
+#define SOFTWARE_VERSION_MSB 1
+#define SOFTWARE_VERSION_LSB 0
+
 //this is the response to the host computer's roll call -- it is used to
 //identify the board type
 
@@ -328,10 +331,10 @@ void sendBytesViaSocket(tcp_Socket *pSocket, int pNumArgs, ...)
 //----------------------------------------------------------------------------
 
 //-----------------------------------------------------------------------------
-// Device::sendPacketViaSocket
+// sendPacketViaSocket
 //
 // Sends a packet via pSocket with command code pCommand followed by a variable
-//  number of bytes (one or more) to the remote device,
+//  number of bytes (one or more).
 //
 // A header is prepended and a checksum byte appended. The checksum includes
 // the command byte and all bytes in the argument list, but not the header
@@ -367,14 +370,63 @@ void sendPacketViaSocket(tcp_Socket *pSocket, char pCommand, int pNumArgs, ...)
 
    va_end(valist);   // clean memory reserved for valist
 
-}//end of Device::sendPacketViaSocket
+}//end of sendPacketViaSocket
 //-----------------------------------------------------------------------------
 
 //-----------------------------------------------------------------------------
-// Device::sendPacketViaSerialPortD
+// sendPacketOfBuffersViaSocket
+//
+// Sends a packet via pSocket containing the bytes in two buffers. This allows
+// the caller to easily supply values at the beginning of the data followed
+// by a buffer of data already collected, such as that from a remote device.
+//
+// The packet sent consists of command code pCommand followed by pNumBytesBuf1
+// number of bytes in pBuf1 which is then followed by pNumBytesBuf2 number of
+// bytes in pBuf2.
+//
+// A header is prepended and a checksum byte appended. The checksum includes
+// the command byte and all bytes in the argument list, but not the header
+// bytes.
+//
+
+void sendPacketOfBuffersViaSocket(tcp_Socket *pSocket, char pCommand,
+					int pNumBytesBuf1, char *pBuf1, int pNumBytesBuf2, char *pBuf2)
+{
+
+	int val = 0, i, sum, checksum;
+
+	sock_write(pSocket, hostPktHeader, 4); //send header
+
+   sock_putc(pSocket, pCommand); //send packet ID
+
+   sum = pCommand;        //command byte included in checksum
+
+   //send contents of pBuf1
+   for(i=0; i<pNumBytesBuf1; i++){
+      sock_putc(pSocket, pBuf1[i]);
+      sum += pBuf1[i];
+   }
+
+   //send contents of pBuf2
+   for(i=0; i<pNumBytesBuf2; i++){
+      sock_putc(pSocket, pBuf2[i]);
+      sum += pBuf2[i];
+   }
+
+   //calculate checksum and send it
+   checksum = (byte)(0x100 - (byte)(sum & 0xff));
+	sock_putc(pSocket, checksum);
+
+   sock_flush(pSocket);
+
+}//end of sendPacketOfBuffersViaSocket
+//-----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
+// sendPacketViaSerialPortD
 //
 // Sends a packet via Serial Port D with command code pCommand followed by a
-// variable number of bytes (one or more) to the remote device,
+// variable number of bytes (one or more) to the remote device.
 //
 // A header is prepended and a checksum byte appended. The checksum includes
 // the command byte and all bytes in the argument list, but not the header
@@ -414,7 +466,7 @@ void sendPacketViaSerialPortD(char pCommand, int pNumArgs, ...)
 
    va_end(valist);   // clean memory reserved for valist
 
-}//end of Device::sendPacketViaSerialPortD
+}//end of sendPacketViaSerialPortD
 //-----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -847,7 +899,7 @@ void sendPacketHeader(tcp_Socket *socket, char pPacketID)
 //
 // When the Master PIC returns the data, it is handled by
 //  handleGetAllStatusPICCommand, where it is transmitted along with the Rabbit
-// status info back to the host.
+//  status info back to the host.
 //
 
 int handleGetAllStatusRbtCommand(tcp_Socket *pSocket, int pPktID)
@@ -856,6 +908,8 @@ int handleGetAllStatusRbtCommand(tcp_Socket *pSocket, int pPktID)
 	int ch;
 
    printf("\nhandleGetAllStatusRbtCommand...\n\n"); //debug mks
+
+   //debug mks -- host sends a zero data byte -- needs to be read here also!!!!
 
    ch = serXgetc(SER_PORT_D); //get the checksum byte
 
@@ -877,8 +931,8 @@ int handleGetAllStatusPICCommand(
 	 									tcp_Socket *pSocket, int pPktLength, int pPktID)
 {
 
-   char buffer[120];
-   int result;
+   char buf1[12], buf2[120];
+   int i, result;
    int debugValue;
 
    int ch;
@@ -888,14 +942,22 @@ int handleGetAllStatusPICCommand(
    //read in the remainder of the packet, subtract 1 because command byte
    //already read by calling function
 
-   result = readBytesAndVerifySP(pPktLength-1, pPktID, buffer);
+   result = readBytesAndVerifySP(pPktLength-1, pPktID, buf2);
 	if (result < 0){ return(result); }
 
-   sendPacketViaSocket(pSocket, pPktID, 32,
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
-    11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-    31, 32);
+   //place Rabbit status data in a buffer
+
+   i = 0;
+   buf1[i++] = SOFTWARE_VERSION_MSB;
+   buf1[i++] = SOFTWARE_VERSION_LSB;
+   buf1[i++] = (controlFlags >> 8) & 0xff; buf1[i++] = controlFlags & 0xff;
+   buf1[i++] = systemStatus;
+   buf1[i++] = (pktError >> 8) & 0xff; buf1[i++] = pktError & 0xff;
+   buf1[i++] = (pktSPError >> 8) & 0xff; buf1[i++] = pktSPError & 0xff;
+   buf1[i++] = 0x55; buf1[i++] = 0xaa; buf1[i++] = 0x5a; //unused bytes
+
+   //send packet with Rabbit data followed by PIC data
+   sendPacketOfBuffersViaSocket(pSocket, pPktID, i, buf1, pPktLength-1, buf2);
 
    return(result); //return number of bytes read from socket
 
