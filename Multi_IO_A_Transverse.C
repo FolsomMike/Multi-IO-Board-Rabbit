@@ -33,13 +33,18 @@
 #define SOFTWARE_VERSION_MSB 1
 #define SOFTWARE_VERSION_LSB 0
 
+// NOTE: if compiling gives "RCM42xx.LIB only supports RCM42xx series boards."
+// error, use Options/Project Options/Targetless/Board Selection tag to
+// choose "58MHz, RCM4200, 512K+512K SRAM, 512K Flas, analog, 8M serial flash"
+// This allows the use of the RCM42xx.LIB as done below:
+
+#use RCM42xx.LIB
+
 //this is the response to the host computer's roll call -- it is used to
 //identify the board type
 
 #define ROLL_CALL_RESPONSE "Transverse Ring 1 Multi-IO Board A"
 //#define ROLL_CALL_RESPONSE "Transverse Ring 2 Multi-IO Board A"
-
-#use RCM42xx.LIB
 
 // Possible options for temporarily storing software update images.  Using
 // temporary storage allows the image to be verified before it is used to
@@ -122,6 +127,8 @@
 #define DOUTBUFSIZE 255
 
 #use "RS232.lib"
+
+#define SERIAL_PORT_NEXT_BYTE_LOOP_COUNT 100		//speed sensitive value
 
 //firmware code upload buffer size is 1024 data bytes plus one command byte
 #define CODE_BUFFER_SIZE 1025
@@ -264,10 +271,16 @@ long prevEnc1Cnt, prevEnc2Cnt;
 // command definitions for Host to Rabbit packets
 
 #define NO_ACTION 0
-#define GET_ALL_STATUS_CMD 1
-#define LOAD_FIRMWARE_CMD 2
-#define DATA_CMD 3
-#define SEND_DATA_CMD 4
+#define ACK_CMD 1
+#define GET_ALL_STATUS_CMD 2
+#define SET_INSPECTION_MODE_CMD 3
+#define SET_POT_CMD 4
+#define UNUSED1_CMD 5
+#define SET_ONOFF_CMD 6
+#define GET_PEAK_DATA_CMD 7
+#define SEND_DATA_CMD 8
+#define DATA_CMD 9
+#define LOAD_FIRMWARE_CMD 10
 
 #define ERROR 125
 #define DEBUG_CMD 126
@@ -278,9 +291,14 @@ long prevEnc1Cnt, prevEnc2Cnt;
 
 // command definitions for Rabbit to Master PIC packets
 
-#define RBT_NO_ACTION EQU 0
-#define RBT_GET_ALL_STATUS 1
-#define RBT_GET_SLAVE_PEAK_DATA 2
+#define RBT_NO_ACTION 0
+#define RBT_ACK_CMD 1
+#define RBT_GET_ALL_STATUS 2
+#define RBT_SET_INSPECTION_MODE 3
+#define RBT_SET_POT 4
+#define RBT_UNUSED1 5
+#define RBT_SET_ONOFF_CMD 6
+#define RBT_GET_PEAK_DATA 7
 
 //----------------------------------------------------------------------------
 // sendBytesViaSerialPortD
@@ -547,18 +565,15 @@ int readBytesAndVerify(tcp_Socket *pSocket, char *pBuffer, int pNumBytes,
 
    bytesRead = sock_fastread(pSocket, pBuffer, pNumBytes);
 
-   if (bytesRead != pNumBytes) return(-2);
+   if (bytesRead != pNumBytes) { pktError++; return(-2); }
 
    //validate checksum by summing the packet id and all data along with the
    //checksum byte
 
-	for(i = 0; i < pNumBytes; i++){
-   	checksum += pBuffer[i];
-   }
+	for(i = 0; i < pNumBytes; i++){ checksum += pBuffer[i]; }
 
-   if ( ((pPktID + checksum) & 0xff) != 0) {return(-1);}
-   else
-	   return(bytesRead);
+   if ( ((pPktID + checksum) & 0xff) == 0) { return(bytesRead); }
+   else { pktError++; return(-1); }
 
 }//end of readBytesAndVerify
 //----------------------------------------------------------------------------
@@ -585,24 +600,24 @@ int readBytesAndVerifySP(int pPktLength, int pPktID, char *pBuffer)
 	int i, bytesRead;
    int checksum = 0;
 
-   bytesRead = serXread(SER_PORT_D, pBuffer, pPktLength, 5);
+   i = 0;
 
-   if (bytesRead != pPktLength) { return(-2); }
+   //at least one byte must be available or serXread will timeout immediately
+	while(i < SERIAL_PORT_NEXT_BYTE_LOOP_COUNT && serXrdUsed(SER_PORT_D) < 1){
+   	i++;
+   }
+
+   bytesRead = serXread(SER_PORT_D, pBuffer, pPktLength, 10);
+
+   if (bytesRead != pPktLength) { pktSPError++; return(-2); }
 
    //validate checksum by summing the packet id and all data along with the
    //checksum byte
 
-	for(i = 0; i < pPktLength; i++){
+	for(i = 0; i < pPktLength; i++){ checksum += pBuffer[i]; }
 
-   	checksum += pBuffer[i];
-
-		printf("Byte from Serial Port D: %d %02x\n", i, pBuffer[i]); //debug mks
-   }
-
-		printf("checksum: %04x\n", pPktID + checksum );//debug mks
-
-   if ( ((pPktID + checksum) & 0xff) != 0) { return(-1); }
-   else{ return(bytesRead); }
+   if ( ((pPktID + checksum) & 0xff) == 0) { return(bytesRead); }
+   else { pktSPError++; return(-1); }
 
 }//end of readBytesAndVerifySP
 //----------------------------------------------------------------------------
@@ -775,12 +790,13 @@ int receiveAndInstallNewFirmware(tcp_Socket *socket, int pPktID)
    int x,y, z, bufPtr, packetCount;
    char shiftReg;
    int result;
+	int numBytesInPkt = 1;
 
    printf("Loading new firmware...\n");
 
    //read in the remainder of the packet
-   result = readBytesAndVerify(socket, bufferIn, 1, pPktID);
-   if (result < 0) return(result);
+   result = readBytesAndVerify(socket, bufferIn, numBytesInPkt, pPktID);
+   if (result != numBytesInPkt) return(result);
 
    packetCount = 0;
 
@@ -891,8 +907,23 @@ void sendPacketHeader(tcp_Socket *socket, char pPacketID)
 }//end of sendPacketHeader
 //----------------------------------------------------------------------------
 
+//-----------------------------------------------------------------------------
+// sendACK
+//
+// Transmits an ACK packet via the socket. Contains the ACK command and a
+// single unused data byte.
+//
+
+void sendACK(tcp_Socket *pSocket)
+{
+
+    sendPacketViaSocket(pSocket, ACK_CMD, 1, 0);
+
+}//end of sendACK
+//-----------------------------------------------------------------------------
+
 //----------------------------------------------------------------------------
-// handleGetAllStatusRbtCommand
+// handleGetAllStatusHostCmd
 //
 // Queries the Master PIC which then queries all Slave PICs for various
 // status information.
@@ -902,48 +933,48 @@ void sendPacketHeader(tcp_Socket *socket, char pPacketID)
 //  status info back to the host.
 //
 
-int handleGetAllStatusRbtCommand(tcp_Socket *pSocket, int pPktID)
+int handleGetAllStatusHostCmd(tcp_Socket *pSocket, int pPktID)
 {
 
-	int ch;
+	int ch, result;
 
-   printf("\nhandleGetAllStatusRbtCommand...\n\n"); //debug mks
+   const int numBytesInPkt = 2;
+	char buffer[2]; //NOTE: must equal numBytesInPkt
 
-   //debug mks -- host sends a zero data byte -- needs to be read here also!!!!
+   //read in the remainder of the packet
 
-   ch = serXgetc(SER_PORT_D); //get the checksum byte
+	result = readBytesAndVerify(pSocket, buffer, numBytesInPkt, pPktID);
+	if (result < numBytesInPkt){ return(result); }
 
 	sendPacketViaSerialPortD(RBT_GET_ALL_STATUS, 1, 0);
 
-   return(1); //return number of bytes read from socket
+   return(result); //return number of bytes read from socket
 
-}//end of handleGetAllStatusRbtCommand
+}//end of handleGetAllStatusHostCmd
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// handleGetAllStatusPICCommand
+// handleGetAllStatusPICCmd
 //
 // Combines the status data in the received packet with status data for the
 // Rabbit and transmits it to the host via pSocket.
 //
 
-int handleGetAllStatusPICCommand(
+int handleGetAllStatusPICCmd(
 	 									tcp_Socket *pSocket, int pPktLength, int pPktID)
 {
 
    char buf1[12], buf2[120];
    int i, result;
    int debugValue;
+   int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
 
    int ch;
 
-   printf("\nhandleGetAllStatusPICCommand...\n\n"); //debug mks
+   //read in the remainder of the packet
 
-   //read in the remainder of the packet, subtract 1 because command byte
-   //already read by calling function
-
-   result = readBytesAndVerifySP(pPktLength-1, pPktID, buf2);
-	if (result < 0){ return(result); }
+   result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
+	if (result < numBytesInPkt){ return(result); }
 
    //place Rabbit status data in a buffer
 
@@ -956,13 +987,51 @@ int handleGetAllStatusPICCommand(
    buf1[i++] = (pktSPError >> 8) & 0xff; buf1[i++] = pktSPError & 0xff;
    buf1[i++] = 0x55; buf1[i++] = 0xaa; buf1[i++] = 0x5a; //unused bytes
 
+   reSyncCount = 0; pktError = 0; reSyncSPCount = 0; pktSPError = 0;
+
    //send packet with Rabbit data followed by PIC data
    sendPacketOfBuffersViaSocket(pSocket, pPktID, i, buf1, pPktLength-1, buf2);
 
    return(result); //return number of bytes read from socket
 
-}//end of handleGetAllStatusPICCommand
+}//end of handleGetAllStatusPICCmd
 //----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
+// handleSetPotHostCmd
+//
+// Handles SET_POT_CMD packet requests received from the host. Sets the
+// specified digital pot to the specified value and transmits an ACK packet.
+//
+// Returns the number of bytes this method extracted from the socket or the
+// error code returned by readBytesAndVerify().
+//
+
+int handleSetPotHostCmd(tcp_Socket *pSocket, int pPktID)
+{
+
+	char enablingPICI2CAddr, potNum, gain;
+
+   const int numBytesInPkt = 4;
+	char buffer[4]; //NOTE: must equal numBytesInPkt
+
+	int result = readBytesAndVerify(pSocket, buffer, numBytesInPkt, pPktID);
+   if (result != numBytesInPkt){ return(result); }
+
+   //send command to the Master PIC
+
+   enablingPICI2CAddr = buffer[0]; // I2C address of the enabling PIC
+   potNum = buffer[1]; // pot number in the chip
+   gain = buffer[2]; // gain value
+
+	sendPacketViaSerialPortD(RBT_SET_POT, 3, enablingPICI2CAddr, potNum, gain);
+
+	sendACK(pSocket); //send ACK back to host
+
+	return(result);
+
+}//end of handleSetPotHostCmd
+//-----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
 // pulseOutput
@@ -2030,7 +2099,7 @@ void reSyncSP()
 
    //track the number of time this function is called, even if a resync is not
    //successful - this will track the number of sync errors
-   reSyncSPCount++;
+   reSyncSPCount++; pktSPError++;
 
    //store info pertaining to what caused the reSync - these values will be
    //overwritten by the next reSync, so they only reflect the last error
@@ -2042,7 +2111,7 @@ void reSyncSP()
    while ((numBytes = serXrdUsed(SER_PORT_D)) > 0) {
 		ch = serXgetc(SER_PORT_D);
 
-		printf("num bytes, byte: %d,%02x\n", numBytes, ch );//debug mks
+		printf("Serial Port Resync - num bytes, byte: %d,%02x\n", numBytes, ch );//debug mks
 
    	if (ch == (byte)0xaa) {reSyncedSP = TRUE; break;}
    }
@@ -2133,14 +2202,9 @@ int processSerialPortDData(tcp_Socket *pSocket, int pWaitForPkt)
 
    // execute the function appropriate for the identifier/command byte
 
-   if (pktSPID == GET_ALL_STATUS_CMD){
-   	result = handleGetAllStatusPICCommand(pSocket, pktSPLength, pktSPID);
-   	printf("result: %d\n\n", result); //debug mks
-      return(result);
+   if (pktSPID == RBT_GET_ALL_STATUS){
+   	return(handleGetAllStatusPICCmd(pSocket, pktSPLength, pktSPID));
       }
-//	else
-//   if (pktSPID == LOAD_FIRMWARE_CMD)
-//      return receiveAndInstallNewFirmware(socket, pktID);
 
    return 0;
 
@@ -2168,7 +2232,7 @@ void reSync(tcp_Socket *socket)
 
    //track the number of time this function is called, even if a resync is not
    //successful - this will track the number of sync errors
-   reSyncCount++;
+   reSyncCount++; pktError++;
 
    //store info pertaining to what caused the reSync - these values will be
    //overwritten by the next reSync, so they only reflect the last error
@@ -2262,11 +2326,14 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
    pktID = pktBuffer[0];
 
    // execute the function appropriate for the identifier/command byte
-   if (pktID == GET_ALL_STATUS_CMD)
-   	return handleGetAllStatusRbtCommand(socket, pktID);
+   if (pktID == GET_ALL_STATUS_CMD){
+   	return handleGetAllStatusHostCmd(socket, pktID); }
 	else
-   if (pktID == LOAD_FIRMWARE_CMD)
-      return receiveAndInstallNewFirmware(socket, pktID);
+   if (pktID == SET_POT_CMD){
+		return handleSetPotHostCmd(socket, pktID); }
+	else
+   if (pktID == LOAD_FIRMWARE_CMD){
+      return receiveAndInstallNewFirmware(socket, pktID); }
 
    return 0;
 
@@ -2280,8 +2347,6 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
 
 main()
 {
-
-	int ch; //debug mks remove this
 
    //TCPIP variables
    tcp_Socket socket;
@@ -2311,8 +2376,6 @@ main()
    setupEthernet();
 
    setupSerialPortD();
-
-   ch = serXrdUsed(SER_PORT_D);
 
    // setup all registers and I/O ports
 	//initRegisters();
