@@ -970,8 +970,7 @@ int handleGetAllStatusPICCmd(
    int i, result;
    int debugValue;
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
-
-   int ch;
+   int pktIDToHost = GET_ALL_STATUS_CMD;
 
    //read in the remainder of the packet
 
@@ -992,7 +991,8 @@ int handleGetAllStatusPICCmd(
    reSyncCount = 0; pktError = 0; reSyncSPCount = 0; pktSPError = 0;
 
    //send packet with Rabbit data followed by PIC data
-   sendPacketOfBuffersViaSocket(pSocket, pPktID, i, buf1, pPktLength-1, buf2);
+   sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, i,
+   											buf1, pPktLength-1, buf2);
 
    return(result); //return number of bytes read from socket
 
@@ -1022,7 +1022,7 @@ int handleGetAllLastADValuesHostCmd(tcp_Socket *pSocket, int pPktID)
 	result = readBytesAndVerify(pSocket, buffer, numBytesInPkt, pPktID);
 	if (result < numBytesInPkt){ return(result); }
 
-	sendPacketViaSerialPortD(GET_ALL_LAST_AD_VALUES_CMD, 1, 0);
+	sendPacketViaSerialPortD(RBT_GET_ALL_LAST_AD_VALUES_CMD, 1, 0);
 
    return(result); //return number of bytes read from socket
 
@@ -1044,8 +1044,7 @@ int handleGetAllLastADValuesPICCmd(
    int i, result;
    int debugValue;
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
-
-   int ch;
+   int pktIDToHost = GET_ALL_LAST_AD_VALUES_CMD;
 
    //read in the remainder of the packet
 
@@ -1057,7 +1056,8 @@ int handleGetAllLastADValuesPICCmd(
    reSyncCount = 0; pktError = 0; reSyncSPCount = 0; pktSPError = 0;
 
    //send packet with collected PIC data
-   sendPacketOfBuffersViaSocket(pSocket, pPktID, i, buf1, pPktLength-1, buf2);
+   sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, i,
+   											buf1, pPktLength-1, buf2);
 
    return(result); //return number of bytes read from socket
 
@@ -2274,7 +2274,7 @@ int processSerialPortDData(tcp_Socket *pSocket, int pWaitForPkt)
       }
 	else
    if (pktSPID == RBT_GET_ALL_LAST_AD_VALUES_CMD){
-   	return(handleGetAllStatusPICCmd(pSocket, pktSPLength, pktSPID));
+   	return(handleGetAllLastADValuesPICCmd(pSocket, pktSPLength, pktSPID));
       }
 
    return 0;
