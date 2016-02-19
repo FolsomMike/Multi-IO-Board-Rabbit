@@ -281,6 +281,7 @@ long prevEnc1Cnt, prevEnc2Cnt;
 #define SEND_DATA_CMD 8
 #define DATA_CMD 9
 #define LOAD_FIRMWARE_CMD 10
+#define GET_ALL_LAST_AD_VALUES_CMD 11
 
 #define ERROR 125
 #define DEBUG_CMD 126
@@ -299,6 +300,7 @@ long prevEnc1Cnt, prevEnc2Cnt;
 #define RBT_UNUSED1 5
 #define RBT_SET_ONOFF_CMD 6
 #define RBT_GET_PEAK_DATA 7
+#define RBT_GET_ALL_LAST_AD_VALUES_CMD 8
 
 //----------------------------------------------------------------------------
 // sendBytesViaSerialPortD
@@ -929,7 +931,7 @@ void sendACK(tcp_Socket *pSocket)
 // status information.
 //
 // When the Master PIC returns the data, it is handled by
-//  handleGetAllStatusPICCommand, where it is transmitted along with the Rabbit
+//  handleGetAllStatusPICCmd, where it is transmitted along with the Rabbit
 //  status info back to the host.
 //
 
@@ -995,6 +997,71 @@ int handleGetAllStatusPICCmd(
    return(result); //return number of bytes read from socket
 
 }//end of handleGetAllStatusPICCmd
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// handleGetAllLastADValuesHostCmd
+//
+// Queries the Master PIC which then queries all Slave PICs for their latest
+// converted AD values.
+//
+// When the Master PIC returns the data, it is handled by
+//  handleGetAllLastADValuesPICCmd, where it is transmitted back to host.
+//
+
+int handleGetAllLastADValuesHostCmd(tcp_Socket *pSocket, int pPktID)
+{
+
+	int ch, result;
+
+   const int numBytesInPkt = 2;
+	char buffer[2]; //NOTE: must equal numBytesInPkt
+
+   //read in the remainder of the packet
+
+	result = readBytesAndVerify(pSocket, buffer, numBytesInPkt, pPktID);
+	if (result < numBytesInPkt){ return(result); }
+
+	sendPacketViaSerialPortD(GET_ALL_LAST_AD_VALUES_CMD, 1, 0);
+
+   return(result); //return number of bytes read from socket
+
+}//end of handleGetAllLastADValuesHostCmd
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// handleGetAllLastADValuesPICCmd
+//
+// Combines the last AD values from all the slave PICs into a packet and
+// transmits it to the host via pSocket.
+//
+
+int handleGetAllLastADValuesPICCmd(
+	 									tcp_Socket *pSocket, int pPktLength, int pPktID)
+{
+
+   char buf1[12], buf2[120];
+   int i, result;
+   int debugValue;
+   int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
+
+   int ch;
+
+   //read in the remainder of the packet
+
+   result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
+	if (result < numBytesInPkt){ return(result); }
+
+   //place Rabbit status data in a buffer
+
+   reSyncCount = 0; pktError = 0; reSyncSPCount = 0; pktSPError = 0;
+
+   //send packet with collected PIC data
+   sendPacketOfBuffersViaSocket(pSocket, pPktID, i, buf1, pPktLength-1, buf2);
+
+   return(result); //return number of bytes read from socket
+
+}//end of handleGetAllLastADValuesPICCmd
 //----------------------------------------------------------------------------
 
 //-----------------------------------------------------------------------------
@@ -2205,6 +2272,10 @@ int processSerialPortDData(tcp_Socket *pSocket, int pWaitForPkt)
    if (pktSPID == RBT_GET_ALL_STATUS){
    	return(handleGetAllStatusPICCmd(pSocket, pktSPLength, pktSPID));
       }
+	else
+   if (pktSPID == RBT_GET_ALL_LAST_AD_VALUES_CMD){
+   	return(handleGetAllStatusPICCmd(pSocket, pktSPLength, pktSPID));
+      }
 
    return 0;
 
@@ -2334,6 +2405,9 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
 	else
    if (pktID == LOAD_FIRMWARE_CMD){
       return receiveAndInstallNewFirmware(socket, pktID); }
+	else
+   if (pktID == GET_ALL_LAST_AD_VALUES_CMD){
+      return handleGetAllLastADValuesHostCmd(socket, pktID); }
 
    return 0;
 
