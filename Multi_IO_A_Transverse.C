@@ -1040,8 +1040,8 @@ int handleGetAllLastADValuesPICCmd(
 	 									tcp_Socket *pSocket, int pPktLength, int pPktID)
 {
 
-   char buf1[12], buf2[120];
-   int i, result;
+   char buf1[1], buf2[120];
+   int result;
    int debugValue;
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
    int pktIDToHost = GET_ALL_LAST_AD_VALUES_CMD;
@@ -1056,7 +1056,7 @@ int handleGetAllLastADValuesPICCmd(
    reSyncCount = 0; pktError = 0; reSyncSPCount = 0; pktSPError = 0;
 
    //send packet with collected PIC data
-   sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, i,
+   sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, 0,
    											buf1, pPktLength-1, buf2);
 
    return(result); //return number of bytes read from socket
