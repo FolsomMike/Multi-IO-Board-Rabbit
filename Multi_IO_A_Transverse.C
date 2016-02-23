@@ -955,6 +955,37 @@ int handleGetRunDataHostCmd(tcp_Socket *pSocket, int pPktID)
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
+// handleGetRunDataPICCmd
+//
+// Transmits the run data received from the Master PIC to to the host via
+// pSocket.
+//
+
+int handleGetRunDataPICCmd(tcp_Socket *pSocket, int pPktLength, int pPktID)
+{
+
+   char buf1[1], buf2[120];
+   int result;
+   int debugValue;
+   int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
+   int pktIDToHost = GET_RUN_DATA_CMD;
+
+   //read in the remainder of the packet
+   result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
+	if (result < numBytesInPkt){ return(result); }
+
+   reSyncCount = 0; pktError = 0; reSyncSPCount = 0; pktSPError = 0;
+
+   //send data packet received from Master PIC to host
+   sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, 0,
+   											buf1, pPktLength-1, buf2);
+
+   return(result); //return number of bytes read from socket
+
+}//end of handleGetRunDataPICCmd
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
 // handleGetAllStatusHostCmd
 //
 // Queries the Master PIC which then queries all Slave PICs for various
@@ -2299,6 +2330,10 @@ int processSerialPortDData(tcp_Socket *pSocket, int pWaitForPkt)
 
    // execute the function appropriate for the identifier/command byte
 
+   if (pktSPID == RBT_GET_RUN_DATA_CMD){
+   	return(handleGetRunDataPICCmd(pSocket, pktSPLength, pktSPID));
+   	}
+   else
    if (pktSPID == RBT_GET_ALL_STATUS){
    	return(handleGetAllStatusPICCmd(pSocket, pktSPLength, pktSPID));
       }
