@@ -299,7 +299,7 @@ long prevEnc1Cnt, prevEnc2Cnt;
 #define RBT_SET_POT 4
 #define RBT_UNUSED1 5
 #define RBT_SET_ONOFF_CMD 6
-#define RBT_GET_PEAK_DATA 7
+#define RBT_GET_RUN_DATA_CMD 7
 #define RBT_GET_ALL_LAST_AD_VALUES_CMD 8
 
 //----------------------------------------------------------------------------
