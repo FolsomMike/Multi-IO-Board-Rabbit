@@ -925,6 +925,36 @@ void sendACK(tcp_Socket *pSocket)
 //-----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
+// handleGetRunDataHostCmd
+//
+// Queries the Master PIC which then queries all Slave PICs for the run data.
+//
+// When the Master PIC returns the data, it is handled by
+//  handleGetRunDataPICCmd, where it is transmitted along with the Rabbit to
+//	 the host.
+//
+
+int handleGetRunDataHostCmd(tcp_Socket *pSocket, int pPktID)
+{
+
+	int ch, result;
+
+   const int numBytesInPkt = 2;
+	char buffer[2]; //NOTE: must equal numBytesInPkt
+
+   //read in the remainder of the packet
+
+	result = readBytesAndVerify(pSocket, buffer, numBytesInPkt, pPktID);
+	if (result < numBytesInPkt){ return(result); }
+
+	sendPacketViaSerialPortD(RBT_GET_RUN_DATA_CMD, 1, 0);
+
+   return(result); //return number of bytes read from socket
+
+}//end of handleGetRunDataHostCmd
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
 // handleGetAllStatusHostCmd
 //
 // Queries the Master PIC which then queries all Slave PICs for various
@@ -2397,6 +2427,9 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
    pktID = pktBuffer[0];
 
    // execute the function appropriate for the identifier/command byte
+   if (pktID == GET_RUN_DATA_CMD){
+      return handleGetRunDataHostCmd(socket, pktID); }
+   else
    if (pktID == GET_ALL_STATUS_CMD){
    	return handleGetAllStatusHostCmd(socket, pktID); }
 	else
