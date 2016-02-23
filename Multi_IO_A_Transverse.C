@@ -277,7 +277,7 @@ long prevEnc1Cnt, prevEnc2Cnt;
 #define SET_POT_CMD 4
 #define UNUSED1_CMD 5
 #define SET_ONOFF_CMD 6
-#define GET_PEAK_DATA_CMD 7
+#define GET_RUN_DATA_CMD 7
 #define SEND_DATA_CMD 8
 #define DATA_CMD 9
 #define LOAD_FIRMWARE_CMD 10
