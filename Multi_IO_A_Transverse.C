@@ -971,37 +971,15 @@ int handleGetRunDataPICCmd(tcp_Socket *pSocket, int pPktLength, int pPktID)
    int pktIDToHost = GET_RUN_DATA_CMD;
    int i;
 
-   //DEBUG HSS// -- remove after done testing run data
-   printf("\nDEBUG HSS :: Received run data from Master PIC\n");
-   printf("Run data packet good?   ");
-	//DEBUG HSS// end
-
    //read in the remainder of the packet
    result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
-	if (result < numBytesInPkt){
-      printf("NOPE\n");	//DEBUG HSS// -- remove this
-   	return(result);
-	}
+	if (result < numBytesInPkt){ return(result); }
 
    reSyncCount = 0; pktError = 0; reSyncSPCount = 0; pktSPError = 0;
 
-   //DEBUG HSS// -- remove this
-
-	printf("YUP\n");
-
-   printf("\nData from Master PIC:\n");
-
-   for (i=0; i<4; i++) {
-   	printf("Byte %02d: %02x\n", i, buf2[i]);
-	}
-
-   //DEBUG HSS// -- end remove this
-
    //send data packet received from Master PIC to host
-   /*sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, 0,
-   											buf1, pPktLength-1, buf2);*/ //DEBUG HSS// -- uncomment out
-  	//DEBUG HSS// -- remove after done testing
-	sendPacketViaSerialPortD(RBT_GET_RUN_DATA_CMD, 1, 0);
+   sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, 0,
+   											buf1, pPktLength-1, buf2);
 
    return(result); //return number of bytes read from socket
 
@@ -2557,11 +2535,6 @@ main()
       waitForHostTCPIPConnection(&socket);
 
       printf("\nWaiting for command...\n");
-
-      //DEBUG HSS// -- remove after done testing run data
-      printf("\nDEBUG HSS :: Requesting run data from Master PIC");
-		sendPacketViaSerialPortD(RBT_GET_RUN_DATA_CMD, 1, 0);
-      //DEBUG HSS// end
 
       //this is the main processing loop
 
