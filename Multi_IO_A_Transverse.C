@@ -204,6 +204,9 @@ int reSyncedSP = FALSE, reSyncSPCount = 0, reSyncSPPktID = 0;
 int pktSPID;
 int pktSPError = 0; //serial port : wrong size, checksum error, execution error
 
+//count how many times run data has been sent
+unsigned char runDataPacketCount = 0;
+
 int masterPICPktChecksum = 0;
 
 char hostPktHeader[4] = {0xaa, 0x55, 0xbb, 0x66};
@@ -965,7 +968,7 @@ int handleGetRunDataPICCmd(tcp_Socket *pSocket, int pPktLength, int pPktID)
 {
 
    char buf1[1], buf2[120];
-   int result;
+   int i, result;
    int debugValue;
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
    int pktIDToHost = GET_RUN_DATA_CMD;
@@ -974,10 +977,14 @@ int handleGetRunDataPICCmd(tcp_Socket *pSocket, int pPktLength, int pPktID)
    result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
 	if (result < numBytesInPkt){ return(result); }
 
+   //place Rabbit run data packet count in a buffer
+   i = 0;
+   buf1[i++] = runDataPacketCount++;
+
    reSyncCount = 0; pktError = 0; reSyncSPCount = 0; pktSPError = 0;
 
    //send data packet received from Master PIC to host
-   sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, 0,
+   sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, i,
    											buf1, numBytesInPkt, buf2);
 
    return(result); //return number of bytes read from socket
