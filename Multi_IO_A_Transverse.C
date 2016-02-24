@@ -969,7 +969,6 @@ int handleGetRunDataPICCmd(tcp_Socket *pSocket, int pPktLength, int pPktID)
    int debugValue;
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
    int pktIDToHost = GET_RUN_DATA_CMD;
-   int i;
 
    //read in the remainder of the packet
    result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
@@ -979,7 +978,7 @@ int handleGetRunDataPICCmd(tcp_Socket *pSocket, int pPktLength, int pPktID)
 
    //send data packet received from Master PIC to host
    sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, 0,
-   											buf1, pPktLength-1, buf2);
+   											buf1, numBytesInPkt, buf2);
 
    return(result); //return number of bytes read from socket
 
