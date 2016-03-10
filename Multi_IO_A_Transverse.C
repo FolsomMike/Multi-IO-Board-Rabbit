@@ -972,6 +972,8 @@ int handleGetRunDataPICCmd(tcp_Socket *pSocket, int pPktLength, int pPktID)
    int debugValue;
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
    int pktIDToHost = GET_RUN_DATA_CMD;
+   int test, testSum;	//DEBUG HSS// -- remove later
+   char testByteSum; //DEBUG HSS// -- remove later
 
    //read in the remainder of the packet
    result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
@@ -984,8 +986,9 @@ int handleGetRunDataPICCmd(tcp_Socket *pSocket, int pPktLength, int pPktID)
    reSyncCount = 0; pktError = 0; reSyncSPCount = 0; pktSPError = 0;
 
    //send data packet received from Master PIC to host
-   sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, i,
-   											buf1, numBytesInPkt, buf2);
+   sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, i, buf1,
+   										numBytesInPkt-1, //-1 to ignore Master chksum
+                                 buf2);
 
    return(result); //return number of bytes read from socket
 
@@ -1166,6 +1169,41 @@ int handleSetPotHostCmd(tcp_Socket *pSocket, int pPktID)
 	return(result);
 
 }//end of handleSetPotHostCmd
+//-----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
+// handleChannelOnOffHostCmd
+//
+// Handles SET_ONOFF_CMD command received from the host. The packet is
+// passed on to the Master PIC and handled there.
+//
+// Returns the number of bytes this method extracted from the socket or the
+// error code returned by readBytesAndVerify().
+//
+
+int handleChannelOnOffHostCmd(tcp_Socket *pSocket, int pPktID)
+{
+
+	char picI2CAddr, onOffByte;
+
+   const int numBytesInPkt = 3; //NOTE: excludes command, includes checksum
+	char buffer[3]; //NOTE: must equal numBytesInPkt
+
+	int result = readBytesAndVerify(pSocket, buffer, numBytesInPkt, pPktID);
+   if (result != numBytesInPkt){ return(result); }
+
+   //send command to the Master PIC
+
+   picI2CAddr = buffer[0]; // I2C address of the enabling PIC
+   onOffByte = buffer[1]; // on/off byte (0 for off; 1 for on)
+
+	sendPacketViaSerialPortD(RBT_SET_ONOFF_CMD, 2, picI2CAddr, onOffByte);
+
+	sendACK(pSocket); //send ACK back to host
+
+	return(result);
+
+}//end of handleChannelOnOffHostCmd
 //-----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -2483,6 +2521,9 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
 	else
    if (pktID == GET_ALL_LAST_AD_VALUES_CMD){
       return handleGetAllLastADValuesHostCmd(socket, pktID); }
+	else
+   if (pktID == SET_ONOFF_CMD){
+      return handleChannelOnOffHostCmd(socket, pktID); }
 
    return 0;
 
