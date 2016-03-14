@@ -967,13 +967,11 @@ int handleGetRunDataHostCmd(tcp_Socket *pSocket, int pPktID)
 int handleGetRunDataPICCmd(tcp_Socket *pSocket, int pPktLength, int pPktID)
 {
 
-   char buf1[1], buf2[120];
+   char buf1[1], buf2[220];
    int i, result;
    int debugValue;
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
    int pktIDToHost = GET_RUN_DATA_CMD;
-   int test, testSum;	//DEBUG HSS// -- remove later
-   char testByteSum; //DEBUG HSS// -- remove later
 
    //read in the remainder of the packet
    result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
