@@ -977,10 +977,6 @@ int handleGetRunDataPICCmd(tcp_Socket *pSocket, int pPktLength, int pPktID)
    result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
 	if (result < numBytesInPkt){ return(result); }
 
-   //DEBUG HSS// -- remove later
-	for (i=0; i<numBytesInPkt; i++) { printf("%02x\n", buf2[i]); }
-   //DEBUG HSS// -- end remove later
-
    //place Rabbit run data packet count in a buffer
    i = 0;
    buf1[i++] = runDataPacketCount++;
