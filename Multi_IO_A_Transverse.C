@@ -204,6 +204,8 @@ int reSyncedSP = FALSE, reSyncSPCount = 0, reSyncSPPktID = 0;
 int pktSPID;
 int pktSPError = 0; //serial port : wrong size, checksum error, execution error
 
+int waitingForPICResponse = FALSE;
+
 //count how many times run data has been sent
 unsigned char runDataPacketCount = 0;
 
@@ -457,11 +459,12 @@ void sendPacketOfBuffersViaSocket(tcp_Socket *pSocket, char pCommand,
 //
 
 void sendPacketViaSerialPortD(char pCommand, int pNumArgs, ...)
-
 {
 
 	int val = 0, i, sum, checksum;
    va_list valist;
+
+	waitingForPICResponse = TRUE;
 
    va_start(valist, pNumArgs); // initialize valist to hold the arguments
 
@@ -928,6 +931,32 @@ void sendACK(tcp_Socket *pSocket)
 //-----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
+// handleAckPktFromMasterPIC
+//
+// Sets waitingForPICResponse variable to false so that more commands may be
+// sent to the Master PIC.
+//
+
+int handleAckPktFromMasterPIC(tcp_Socket *pSocket, int pPktLength, int pPktID)
+{
+
+   char buf1[1], buf2[220];
+   int i, result;
+   int debugValue;
+   int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
+
+   waitingForPICResponse = FALSE;
+
+   //read in the remainder of the packet
+   result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
+	if (result < numBytesInPkt){ return(result); }
+
+   return(result); //return number of bytes read from socket
+
+}//end of handleAckPktFromMasterPIC
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
 // handleGetRunDataHostCmd
 //
 // Queries the Master PIC which then queries all Slave PICs for the run data.
@@ -972,6 +1001,8 @@ int handleGetRunDataPICCmd(tcp_Socket *pSocket, int pPktLength, int pPktID)
    int debugValue;
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
    int pktIDToHost = GET_RUN_DATA_CMD;
+
+   waitingForPICResponse = FALSE;
 
    //read in the remainder of the packet
    result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
@@ -1040,6 +1071,8 @@ int handleGetAllStatusPICCmd(
    int debugValue;
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
    int pktIDToHost = GET_ALL_STATUS_CMD;
+
+   waitingForPICResponse = FALSE;
 
    //read in the remainder of the packet
 
@@ -1114,6 +1147,8 @@ int handleGetAllLastADValuesPICCmd(
    int debugValue;
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
    int pktIDToHost = GET_ALL_LAST_AD_VALUES_CMD;
+
+   waitingForPICResponse = FALSE;
 
    //read in the remainder of the packet
 
@@ -2377,6 +2412,10 @@ int processSerialPortDData(tcp_Socket *pSocket, int pWaitForPkt)
    	return(handleGetRunDataPICCmd(pSocket, pktSPLength, pktSPID));
    	}
    else
+   if (pktSPID ==  RBT_ACK_CMD) {
+		return(handleAckPktFromMasterPIC(pSocket, pktSPLength, pktSPID));
+   	}
+   else
    if (pktSPID == RBT_GET_ALL_STATUS){
    	return(handleGetAllStatusPICCmd(pSocket, pktSPLength, pktSPID));
       }
@@ -2463,6 +2502,14 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
 
    int bytes_read;
    char pktBuffer[10];
+
+   //DEBUG HSS// remove later
+	if (sock_bytesready(socket)> 1000) {
+   	printf( "Bytes in ethernet buf: %d\n", sock_bytesready(socket));
+   }
+   //DEBUG HSS// end remove later
+
+   if (waitingForPICResponse) { return 0; }
 
    //wait for a packet if parameter is true
    if (pWaitForPkt){while(sock_bytesready(socket) < 5){}}
@@ -2574,6 +2621,8 @@ main()
 
    while(1) {
 
+		waitingForPICResponse = FALSE;
+
       //wait for the host computer to broadcast the roll call via UDP
       waitForHostViaUDP();
 
@@ -2591,6 +2640,13 @@ main()
          // value greater than 0 means that a packet was found and processed
          // and the value usually equals the number of bytes read to
          // complete the packet
+         // If waiting for a response from the Master PIC from the previous
+         // command, do not process Ethernet...allows host commands to
+         // accumulate in the buffer. The host should not send so many
+         // commands as to overrun the buffer. This feature is mainly for
+         // the GET_RUN_DATA_CMD as it takes longer to retrieve all the data
+         // from the slave pics and a new command cannot be sent to the
+         // Master PIC during that process or it will cause a conflict.
 
          if (processEthernetData(&socket, FALSE) == -1) pktError++;
 
