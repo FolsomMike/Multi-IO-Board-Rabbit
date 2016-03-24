@@ -114,6 +114,10 @@
 #define PORT 23
 #define TCP_BUF_SIZE 4096
 
+// TCP_BUF_SIZE 4096:
+//			4096 for UDP buffer
+//		 	2048 for TCP read buffer and 2048 for TCP write buffer
+
 //UDP Defines
 #define USE_MULTICAST
 #define MAX_UDP_SOCKET_BUFFERS 1
@@ -1714,7 +1718,6 @@ int stopMonitor(tcp_Socket *socket, int pPktID)
 int processMonitor(tcp_Socket *socket)
 {
 
-   int bytes_read;
    int pktSize = 25;
    char  buffer[25];
    int x = 0;
@@ -2500,14 +2503,8 @@ void reSync(tcp_Socket *socket)
 int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
 {
 
-   int bytes_read;
+   int bytesReady;
    char pktBuffer[10];
-
-   //DEBUG HSS// remove later
-	if (sock_bytesready(socket)> 1000) {
-   	printf( "Bytes in ethernet buf: %d\n", sock_bytesready(socket));
-   }
-   //DEBUG HSS// end remove later
 
    if (waitingForPICResponse) { return 0; }
 
@@ -2516,7 +2513,7 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
 
    //wait until 5 bytes are available - this should be the 4 header bytes, and
    //the packet identifier/command
-   if ((bytes_read = sock_bytesready(socket)) < 5) return 0;
+   if ((bytesReady = sock_bytesready(socket)) < 5) return 0;
 
    //read the bytes in one at a time so that if an invalid byte is encountered
    //it won't corrupt the next valid sequence in the case where it occurs
