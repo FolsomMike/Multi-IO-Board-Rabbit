@@ -292,6 +292,7 @@ long prevEnc1Cnt, prevEnc2Cnt;
 #define LOAD_FIRMWARE_CMD 10
 #define GET_ALL_LAST_AD_VALUES_CMD 11
 #define SET_LOCATION_CMD 12
+#define SET_CLOCK_CMD 13
 
 #define ERROR 125
 #define DEBUG_CMD 126
@@ -312,6 +313,7 @@ long prevEnc1Cnt, prevEnc2Cnt;
 #define RBT_GET_RUN_DATA_CMD 7
 #define RBT_GET_ALL_LAST_AD_VALUES_CMD 8
 #define RBT_SET_LOCATION_CMD 9
+#define RBT_SET_CLOCK_CMD 10
 
 //----------------------------------------------------------------------------
 // sendBytesViaSerialPortD
@@ -1278,6 +1280,41 @@ int handleSetLocationHostCmd(tcp_Socket *pSocket, int pPktID)
 	return(result);
 
 }//end of handleSetLocationHostCmd
+//-----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
+// handleSetClockHostCmd
+//
+// Handles SET_CLOCK_CMD command received from the host. The packet is passed on
+// to the Master PIC and handled there.
+//
+// Returns the number of bytes this method extracted from the socket or the
+// error code returned by readBytesAndVerify().
+//
+
+int handleSetClockHostCmd(tcp_Socket *pSocket, int pPktID)
+{
+
+	char picI2CAddr, clockByte;
+
+   const int numBytesInPkt = 3; //NOTE: excludes command, includes checksum
+	char buffer[3]; //NOTE: must equal numBytesInPkt
+
+	int result = readBytesAndVerify(pSocket, buffer, numBytesInPkt, pPktID);
+   if (result != numBytesInPkt){ return(result); }
+
+   //send command to the Master PIC
+
+   picI2CAddr = buffer[0]; // I2C address of the Slave PIC
+   clockByte = buffer[1]; // clock byte
+
+	sendPacketViaSerialPortD(RBT_SET_CLOCK_CMD, 2, picI2CAddr, clockByte);
+
+	sendACK(pSocket); //send ACK back to host
+
+	return(result);
+
+}//end of handleSetClockHostCmd
 //-----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -2606,6 +2643,9 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
    else
 	if (pktID == SET_LOCATION_CMD){
    	return handleSetLocationHostCmd(socket, pktID); }
+   else
+	if (pktID == SET_CLOCK_CMD){
+   	return handleSetClockHostCmd(socket, pktID); }
 
    return 0;
 
