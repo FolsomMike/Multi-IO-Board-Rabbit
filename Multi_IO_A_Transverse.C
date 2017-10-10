@@ -43,7 +43,7 @@
 //this is the response to the host computer's roll call -- it is used to
 //identify the board type
 
-#define ROLL_CALL_RESPONSE "Transverse Ring 1 Multi-IO Board A"
+#define ROLL_CALL_RESPONSE "MultiIO Transverse"
 //#define ROLL_CALL_RESPONSE "Transverse Ring 2 Multi-IO Board A"
 
 // Possible options for temporarily storing software update images.  Using
