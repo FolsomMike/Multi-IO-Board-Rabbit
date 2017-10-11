@@ -1979,6 +1979,29 @@ void initRegisters()
 
    WrPortI(PBDDR, &PBDDRShadow, 0xff);
 
+//debug mks ~ testing port b outputs
+
+#asm
+	ld		a, (PBDRShadow)
+	res	0, a
+	res	1, a
+	res	2, a
+	res	3, a
+	ld		(PBDRShadow), a
+	ioi	ld (PBDR), a
+	ld		a, (PBDDRShadow)
+	set	0, a
+	set	1, a
+	set	2, a
+	set	3, a
+	ld		(PBDDRShadow), a
+	ioi	ld (PBDDR), a
+#endasm
+//debug mks end
+
+
+
+
    //------------ Setup Port C ------------
 
    // C Port 0 - UT Bank Sync Output
@@ -2718,6 +2741,31 @@ main()
       //this is the main processing loop
 
       do{
+
+//debug mks ~ testing port b outputs
+
+
+#asm
+
+	ld		a, (PBDRShadow)
+	set	0, a
+	set	1, a
+	set	2, a
+	set	3, a
+	ld		(PBDRShadow), a
+	ioi	ld (PBDR), a
+
+	ld		a, (PBDRShadow)
+	res	0, a
+	res	1, a
+	res	2, a
+	res	3, a
+	ld		(PBDRShadow), a
+	ioi	ld (PBDR), a
+
+#endasm
+//debug mks end
+
 
       	//DEBUG HSS// remove later
    		WrPortI(PBDR, &PBDRShadow, 0xff);
