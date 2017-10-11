@@ -1968,8 +1968,16 @@ void initRegisters()
 
    //------------ Setup Port B ------------
 
-   // set all B ports as inputs
-   WrPortI(PBDDR, &PBDDRShadow, 0x00);
+   // B Port 0 - output, JP1 pin 2
+   // B Port 1 - output, unused
+   // B Port 2 - output, JP1 pin 1 (change to output for debugging)
+   // B Port 3 - output, unused
+   // B Port 4 - output, unused
+   // B Port 5 - output, unused
+   // B Port 6 - output, unused
+   // B Port 7 - output, unused
+
+   WrPortI(PBDDR, &PBDDRShadow, 0xff);
 
    //------------ Setup Port C ------------
 
@@ -2710,6 +2718,11 @@ main()
       //this is the main processing loop
 
       do{
+
+      	//DEBUG HSS// remove later
+   		WrPortI(PBDR, &PBDRShadow, 0xff);
+//			BitWrPortI(PBDR, &PBDRShadow, 0, 2);
+         //DEBUG HSS// end remove later
 
          //process any data packets received from the host
          // return value of -1 means packet size, checksum, or execution error
