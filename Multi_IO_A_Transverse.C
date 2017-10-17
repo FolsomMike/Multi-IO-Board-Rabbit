@@ -142,9 +142,10 @@
 #define	INT_TIMERB		0x0B
 
 // masks for Timer B Clock Source
-#define TBCR_CLOCK_PCLK2	0x00
-#define TBCR_CLOCK_PCLK16	0x08
-#define TBCR_CLOCK_A1		0x04
+#define TBCR_CLOCK_PCLK2		0x00
+#define TBCR_CLOCK_A1			0x04
+#define TBCR_CLOCK_PCLK16		0x08
+#define TBCR_USE_STEP1_REGS	0x10
 
 // masks for Timer B Interrupt Priority
 #define TBCR_NO_INT			0x00
@@ -159,6 +160,26 @@
 // masks for Timer B Main Clock
 #define TBCSR_MAIN_CLK_DIS	0x00
 #define TBCSR_MAIN_CLK_ENA	0x01
+
+//	Watch out for the timer B match registers -- there are two bytes for each
+// register, and the bits of the upper byte are not in the
+//	"expected" locations:
+//
+//				   Match register MSB		Match register LSB
+//			  |------------------------|------------------------|
+//		Bit: | 9  8  x  x  x  x  x  x	| 7  6  5  4  3  2  1  0 |
+//			  |------------------------|------------------------|
+//			    ^  ^
+// Note that the step registers which can be used to auto reload these match
+// registers do NOT have the mangled bit order.
+
+// values for Timer B Step Registers        256 -> 0000 0001 0000 0000
+// do NOT load the match registers with these as the match registers are
+//  bit mangled (see above). These values are only meant for the step registers.
+#define TIMERB_STEP1_MSB 0x01
+#define TIMERB_STEP1_LSB 0x00
+
+#define TIMERB_FREQ 14160	//update this whenever step values changed
 
 // values for Timer B Match Registers
 // NOTE: this is not currently used - the simpler reload value of 0 is used
@@ -187,11 +208,44 @@ const int timerb_inc= TIMERB_INCREMENT&0xff | ((TIMERB_INCREMENT<<6) & 0xc000);
 #define portE3 3		// bit on Port E
 #define portE4 4		// bit on Port E
 
+//Defines snagged from Control
+
+//rotational
+#define ENC1A 0  		// bit on Port A
+#define ENC1B 1		// bit on Port A
+
+//linear
+#define ENC2A 2		// bit on Port A
+#define ENC2B 3		// bit on Port A
+
+#define UNUSED1 4		// bit on Port A
+#define UNUSED2 5		// bit on Port A
+#define INSPECT 6		// bit on Port A
+#define UNUSED3 7		// bit on Port A
+#define TDC 0			// bit on Port E
+#define UNUSED4 1		// bit on Port E
+
+#define ON_PIPE_CTRL 1
+#define HEAD1_DOWN_CTRL 2
+#define HEAD2_DOWN_CTRL 4
+#define HEAD3_DOWN_CTRL 8
+
+#define DS2 0
+#define DS3 1
+
+#define DS2_BIT 2
+#define DS3_BIT 3
+
 
 //----------------------------------------------------------------------------
 // Global Variables
 
 unsigned int controlFlags = 0;	//flags set by host to control board functions
+
+double TIMERB_PERIOD = (double)1.0 / (double)TIMERB_FREQ;
+
+//number of timerb counts in .01 seconds
+int TIMERB_SCALER_10MS = (int)(0.01 / TIMERB_PERIOD);
 
 // byte for system status flags
 char systemStatus = 0;
@@ -224,9 +278,6 @@ char countBAccessFlag;	// used to prevent ISR updating counter values while
 						// they are being accessed by the non-ISR code
 long tickCount; //incremented approximately every .01 seconds
 
-long encoderPosAtOnPipeSignal = 0;
-long encoderPosAtOffPipeSignal = 0;
-
 short output1State, output1Timer;
 short output2State, output2Timer;
 short output3State, output3Timer;
@@ -243,6 +294,32 @@ int inspectPacketCount = 0;
 byte status = 0;
 
 // end of Global Variables
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// Global Variables for Control Stuff
+
+long encoderPosAtLastSigChange = 0;
+long encoderPosAtOnPipeSignal = 0;
+long encoderPosAtOffPipeSignal = 0;
+long encoderPosAtHead1DownSignal = 0;
+long encoderPosAtHead1UpSignal = 0;
+long encoderPosAtHead2DownSignal = 0;
+long encoderPosAtHead2UpSignal = 0;
+long encoderPosAtHead3DownSignal = 0;
+long encoderPosAtHead3UpSignal = 0;
+
+long encoder1Count; 	// counter for tracking encoder 1 position
+long encoder2Count;	// counter for tracking encoder 1 position
+char encAccessFlag; // used to prevent ISR updating counter values while they
+					// are being accessed by the non-ISR code
+
+//number of encoder counts to trigger an update to the host
+short encoder1Delta, encoder2Delta;
+
+int resetPulseTrack = FALSE;
+
+// end of Global Variables for Control Stuff
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -265,6 +342,11 @@ union {
 	} enc2CntTemp;
 
 int sendMonitorPacket = FALSE;
+
+
+long prevEnc1CntsForCPS = 0, prevEnc2CntsForCPS = 0;
+long prevEncCPSTmrCnt = 0;
+short int enc1CntsPerSecAvg = 0, enc2CntsPerSecAvg = 0;
 
 // end of Global Variables for Monitor Function
 //----------------------------------------------------------------------------
@@ -293,6 +375,23 @@ long prevEnc1Cnt, prevEnc2Cnt;
 #define GET_ALL_LAST_AD_VALUES_CMD 11
 #define SET_LOCATION_CMD 12
 #define SET_CLOCK_CMD 13
+
+#define GET_INSPECT_PACKET_CMD 14
+#define ZERO_ENCODERS_CMD 15
+#define GET_MONITOR_PACKET_CMD 16
+#define PULSE_OUTPUT_CMD 17
+#define TURN_ON_OUTPUT_CMD 18
+#define TURN_OFF_OUTPUT_CMD 19
+#define SET_ENCODERS_DELTA_TRIGGER_CMD 20
+#define START_INSPECT_CMD 21
+#define STOP_INSPECT_CMD 22
+#define START_MONITOR_CMD 23
+#define STOP_MONITOR_CMD 24
+#define GET_CHASSIS_SLOT_ADDRESS_CMD 25
+#define SET_CONTROL_FLAGS_CMD 26
+#define RESET_TRACK_COUNTERS_CMD 27
+#define GET_ALL_ENCODER_VALUES_CMD 28
+#define SET_MODE_CMD 29
 
 #define ERROR 125
 #define DEBUG_CMD 126
@@ -987,6 +1086,13 @@ int handleGetRunDataHostCmd(tcp_Socket *pSocket, int pPktID)
 	result = readBytesAndVerify(pSocket, buffer, numBytesInPkt, pPktID);
 	if (result < numBytesInPkt){ return(result); }
 
+   //DEBUG HSS// Port B, bit 2, is set here because it is the start of the
+   //Rabbit requesting run data from the Master PIC. Set high here and low
+   //after all data received from Master PIC so pulses can be measured with
+   //scope
+	BitWrPortI(PBDR, &PBDRShadow, 1, 2);
+   //DEBUG HSS// end remove later
+
 	sendPacketViaSerialPortD(RBT_GET_RUN_DATA_CMD, 1, 0);
 
    return(result); //return number of bytes read from socket
@@ -1015,6 +1121,13 @@ int handleGetRunDataPICCmd(tcp_Socket *pSocket, int pPktLength, int pPktID)
    //read in the remainder of the packet
    result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
 	if (result < numBytesInPkt){ return(result); }
+
+    //DEBUG HSS// Port B, bit 2, is set low here because it is the end of the
+   //Rabbit requesting run data from the Master PIC. Set low here and high right
+   //before all data requested from Master PIC so pulses can be measured with
+   //scope
+   BitWrPortI(PBDR, &PBDRShadow, 0, 2);
+   //DEBUG HSS// end remove later
 
    //place Rabbit run data packet count in a buffer
    i = 0;
@@ -1318,7 +1431,137 @@ int handleSetClockHostCmd(tcp_Socket *pSocket, int pPktID)
 //-----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// pulseOutput
+// handleGetAllEncoderValuesHostCmd
+//
+// Returns all encoder values saved at different points in the inspection
+// process.
+//
+// The data is sent back to the host via the socket.
+//
+
+int handleGetAllEncoderValuesHostCmd(tcp_Socket *socket, int pPktID)
+{
+
+   char buffer[50];
+   int x, result;
+
+   //read in the remainder of the packet
+   result = readBytesAndVerify(socket, buffer, 1, pPktID);
+   if (result < 0) return(result);
+
+   x = 0;
+
+   //place encoders values into the buffer by byte, MSB first
+
+   buffer[x++] = (char)((encoderPosAtOnPipeSignal >> 24) & 0xff);
+   buffer[x++] = (char)((encoderPosAtOnPipeSignal >> 16) & 0xff);
+   buffer[x++] = (char)((encoderPosAtOnPipeSignal >> 8) & 0xff);
+   buffer[x++] = (char)(encoderPosAtOnPipeSignal & 0xff);
+
+   buffer[x++] = (char)((encoderPosAtOffPipeSignal >> 24) & 0xff);
+   buffer[x++] = (char)((encoderPosAtOffPipeSignal >> 16) & 0xff);
+   buffer[x++] = (char)((encoderPosAtOffPipeSignal >> 8) & 0xff);
+   buffer[x++] = (char)(encoderPosAtOffPipeSignal & 0xff);
+
+   buffer[x++] = (char)((encoderPosAtHead1DownSignal >> 24) & 0xff);
+   buffer[x++] = (char)((encoderPosAtHead1DownSignal >> 16) & 0xff);
+   buffer[x++] = (char)((encoderPosAtHead1DownSignal >> 8) & 0xff);
+   buffer[x++] = (char)(encoderPosAtHead1DownSignal & 0xff);
+
+   buffer[x++] = (char)((encoderPosAtHead1UpSignal >> 24) & 0xff);
+   buffer[x++] = (char)((encoderPosAtHead1UpSignal >> 16) & 0xff);
+   buffer[x++] = (char)((encoderPosAtHead1UpSignal >> 8) & 0xff);
+   buffer[x++] = (char)(encoderPosAtHead1UpSignal & 0xff);
+
+   buffer[x++] = (char)((encoderPosAtHead2DownSignal >> 24) & 0xff);
+   buffer[x++] = (char)((encoderPosAtHead2DownSignal >> 16) & 0xff);
+   buffer[x++] = (char)((encoderPosAtHead2DownSignal >> 8) & 0xff);
+   buffer[x++] = (char)(encoderPosAtHead2DownSignal & 0xff);
+
+   buffer[x++] = (char)((encoderPosAtHead2UpSignal >> 24) & 0xff);
+   buffer[x++] = (char)((encoderPosAtHead2UpSignal >> 16) & 0xff);
+   buffer[x++] = (char)((encoderPosAtHead2UpSignal >> 8) & 0xff);
+   buffer[x++] = (char)(encoderPosAtHead2UpSignal & 0xff);
+
+   buffer[x++] = (char)((encoderPosAtHead3DownSignal >> 24) & 0xff);
+   buffer[x++] = (char)((encoderPosAtHead3DownSignal >> 16) & 0xff);
+   buffer[x++] = (char)((encoderPosAtHead3DownSignal >> 8) & 0xff);
+   buffer[x++] = (char)(encoderPosAtHead3DownSignal & 0xff);
+
+   buffer[x++] = (char)((encoderPosAtHead3UpSignal >> 24) & 0xff);
+   buffer[x++] = (char)((encoderPosAtHead3UpSignal >> 16) & 0xff);
+   buffer[x++] = (char)((encoderPosAtHead3UpSignal >> 8) & 0xff);
+   buffer[x++] = (char)(encoderPosAtHead3UpSignal & 0xff);
+
+   //send the buffer to host
+   sendPacketHeader(socket, GET_ALL_ENCODER_VALUES_CMD);
+   sock_flushnext(socket);
+   //x already incremented properly for use as packet size
+   sock_write(socket, buffer, x);
+
+   return(1); //return number of bytes read from socket
+
+}//end of handleGetAllEncoderValuesHostCmd
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// zeroAllEncoderValues
+//
+// Sets counters for the encoders to zero.
+//
+// Zeroes all encoder count variables.
+//
+
+int zeroAllEncoderValues()
+{
+
+   encAccessFlag = 1; // block the ISR from modifying
+
+   encoder1Count = 0;
+   encoder2Count = 0;
+
+   encAccessFlag = 0; // unblock the ISR
+
+   //reset various encoder values
+
+   encoderPosAtLastSigChange = 0;
+	encoderPosAtOnPipeSignal = 0;
+	encoderPosAtOffPipeSignal = 0;
+	encoderPosAtHead1DownSignal = 0;
+	encoderPosAtHead1UpSignal = 0;
+	encoderPosAtHead2DownSignal = 0;
+	encoderPosAtHead2UpSignal = 0;
+	encoderPosAtHead3DownSignal = 0;
+	encoderPosAtHead3UpSignal = 0;
+
+}//end of zeroAllEncoderValues
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// handleZeroEncoderCountsHostCmd
+//
+// Sets counters for the encoders to zero.
+//
+
+int handleZeroEncoderCountsHostCmd(tcp_Socket *socket, int pPktID)
+{
+
+   int x, result;
+   char buffer[2];
+
+   //read in the remainder of the packet
+   result = readBytesAndVerify(socket, buffer, 2, pPktID);
+   if (result < 0) return(result);
+
+   zeroAllEncoderValues();
+
+   return(0);
+
+}//end of handleZeroEncoderCountsHostCmd
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// handlePulseOutputHostCmd
 //
 // Pulses the output lines specified by the byte in the packet from the host.
 // To pulse, the ouput line is turned on here and turned off by the interrupt
@@ -1335,12 +1578,15 @@ int handleSetClockHostCmd(tcp_Socket *pSocket, int pPktID)
 // specify the time in .01 second increments to fire the pulse.
 //
 
-int pulseOutput(tcp_Socket *socket, int pPktID)
+int handlePulseOutputHostCmd(tcp_Socket *socket, int pPktID)
 {
 
    int x, result;
    int output;
    char buffer[2];
+
+
+  //WIP HSS// preeeetttyy sure this should be done in Master PIC //DEBUG HSS//
 
    output = OUTPUT1;
 
@@ -1368,11 +1614,11 @@ int pulseOutput(tcp_Socket *socket, int pPktID)
 
    return(0);
 
-}//end of pulseOutput
+}//end of handlePulseOutputHostCmd
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// turnOnOutput
+// handleTurnOnOutputHostCmd
 //
 // Turns on the output lines specified by the byte in the packet from the host.
 //
@@ -1381,7 +1627,7 @@ int pulseOutput(tcp_Socket *socket, int pPktID)
 //  is specified by a different bit in the data byte.
 //
 
-int turnOnOutput(tcp_Socket *socket, int pPktID)
+int handleTurnOnOutputHostCmd(tcp_Socket *socket, int pPktID)
 {
 
    int x, result;
@@ -1390,6 +1636,9 @@ int turnOnOutput(tcp_Socket *socket, int pPktID)
    //read in the remainder of the packet
    result = readBytesAndVerify(socket, buffer, 2, pPktID);
    if (result < 0) return(result);
+
+
+   //WIP HSS// preeeetttyy sure this should be done in Master PIC //DEBUG HSS//
 
    //set output to 0 which turns on the optoisolator
    BitWrPortI(PCDR, &PCDRShadow, 0, OUTPUT1);
@@ -1398,11 +1647,11 @@ int turnOnOutput(tcp_Socket *socket, int pPktID)
 
    return(0);
 
-}//end of turnOnOutput
+}//end of handleTurnOnOutputHostCmd
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// turnOffOutput
+// handleTurnOffOutputHostCmd
 //
 // Turns off the output lines specified by the byte in the packet from the host.
 //
@@ -1411,7 +1660,7 @@ int turnOnOutput(tcp_Socket *socket, int pPktID)
 //  is specified by a different bit in the data byte.
 //
 
-int turnOffOutput(tcp_Socket *socket, int pPktID)
+int handleTurnOffOutputHostCmd (tcp_Socket *socket, int pPktID)
 {
 
    int x, result;
@@ -1420,6 +1669,9 @@ int turnOffOutput(tcp_Socket *socket, int pPktID)
    //read in the remainder of the packet
    result = readBytesAndVerify(socket, buffer, 2, pPktID);
    if (result < 0) return(result);
+
+   //WIP HSS// preeeetttyy sure this should be done in Master PIC //DEBUG HSS//
+
 
    //set output to 1 which turns off the optoisolator
    BitWrPortI(PCDR, &PCDRShadow, 1, OUTPUT1);
@@ -1428,11 +1680,11 @@ int turnOffOutput(tcp_Socket *socket, int pPktID)
 
    return(0);
 
-}//end of turnOffOutput
+}//end of handleTurnOffOutputHostCmd
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// setEncodersDeltaTrigger
+// handleSetEncodersDeltaTriggerHostCmd
 //
 // Tells the Control board how many encoder counts to wait before sending
 // an encoder value update.  The trigger value for each encoder is sent.
@@ -1441,24 +1693,39 @@ int turnOffOutput(tcp_Socket *socket, int pPktID)
 // travel of the piece being inspected.
 //
 
-int setEncodersDeltaTrigger(tcp_Socket *socket, int pPktID)
+int handleSetEncodersDeltaTriggerHostCmd(tcp_Socket *socket, int pPktID)
 {
 
+   int x, result;
+   char buffer[5];
+
+   //read in the remainder of the packet
+   result = readBytesAndVerify(socket, buffer, 5, pPktID);
+   if (result < 0) return(result);
+
+   x = 0;
+
+   //get the encoder 1 delta trigger
+   encoder1Delta = (unsigned)((buffer[x++]<<8) & 0xff00)
+                                     + (unsigned)(buffer[x++] & 0xff);
+
+   encoder2Delta = (unsigned)((buffer[x++]<<8) & 0xff00)
+                                     + (unsigned)(buffer[x++] & 0xff);
 
    return(0);
 
-}//end of setEncodersDeltaTrigger
+}//end of handleSetEncodersDeltaTriggerHostCmd
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// startInspect
+// handleStartInspectHostCmd
 //
 // Puts Control board in the inspect mode.  In this mode the Control board
 // will monitor encoder and status signals and return position information to
 // the host.
 //
 
-int startInspect(tcp_Socket *socket, int pPktID)
+int handleStartInspectHostCmd(tcp_Socket *socket, int pPktID)
 {
 
    int x, result;
@@ -1468,19 +1735,23 @@ int startInspect(tcp_Socket *socket, int pPktID)
    result = readBytesAndVerify(socket, buffer, 2, pPktID);
    if (result < 0) return(result);
 
+   zeroAllEncoderValues();
+
+   //start processing inputs and sending inspect data packets
+   inspectMode = TRUE;
 
    return(0);
 
-}//end of startInspect
+}//end of handleStartInspectHostCmd
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// stopInspect
+// handleStopInspectHostCmd
 //
 // Exits the inspect mode
 //
 
-int stopInspect(tcp_Socket *socket, int pPktID)
+int handleStopInspectHostCmd(tcp_Socket *socket, int pPktID)
 {
 
    int x, result;
@@ -1490,9 +1761,11 @@ int stopInspect(tcp_Socket *socket, int pPktID)
    result = readBytesAndVerify(socket, buffer, 2, pPktID);
    if (result < 0) return(result);
 
+	inspectMode = FALSE;
+
    return(0);
 
-}//end of stopInspect
+}//end of handleStopInspectHostCmd
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -1552,19 +1825,46 @@ int sendInspectPacket(tcp_Socket *socket)
 
 void processInspect(tcp_Socket *socket)
 {
+	//WIP HSS// probably need to read values from Master PIC //DEBUG HSS//
+
+	// retrieve the encoder count values
+   encAccessFlag = 1; // block the ISR from modifying
+   enc1CntTemp.lVal = encoder1Count; //snag the values to local variables
+   enc2CntTemp.lVal = encoder2Count;
+   encAccessFlag = 0; // unblock the ISR
+
+   //if either encoder has moved the delta amount specified by the host then
+   //send a packet and reset both encoder delta count variables to prevent
+   //a quick hit by the other encoder reaching its delta
+
+   if (forceSendInspectPacket ||
+        (labs(enc1CntTemp.lVal - prevEnc1Cnt) >= encoder1Delta) ||
+        (labs(enc2CntTemp.lVal - prevEnc2Cnt) >= encoder2Delta)
+        ){
+
+      forceSendInspectPacket = FALSE;
+
+      //save counts for future comparisons
+      prevEnc1Cnt = enc1CntTemp.lVal; prevEnc2Cnt = enc2CntTemp.lVal;
+
+      sendInspectPacket(socket);
+
+   }
+   else
+   	return;
 
 
 }//end of processInspect
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// getInspectPacket
+// handleGetInspectPacketHostCmd
 //
 // Forces an Inspect data packet to be sent even if input triggers have not
 // occurred.
 //
 
-int getInspectPacket(tcp_Socket *socket, int pPktID)
+int handleGetInspectPacketHostCmd(tcp_Socket *socket, int pPktID)
 {
 
    int x, result;
@@ -1577,17 +1877,17 @@ int getInspectPacket(tcp_Socket *socket, int pPktID)
    //send the packet
    sendInspectPacket(socket);
 
-}//end of getInspectPacket
+}//end of handleGetInspectPacketHostCmd
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// getMonitorPacket
+// handleGetMonitorPacketHostCmd
 //
 // Triggers a Monitor info packet to be sent to host even if no values have
 // been changed.
 //
 
-int getMonitorPacket(tcp_Socket *socket, int pPktID)
+int handleGetMonitorPacketHostCmd (tcp_Socket *socket, int pPktID)
 {
 
    int x, result;
@@ -1600,7 +1900,67 @@ int getMonitorPacket(tcp_Socket *socket, int pPktID)
    //set flag to trigger send
    sendMonitorPacket = TRUE;
 
-}//end of getMonitorPacket
+}//end of handleGetMonitorPacketHostCmd
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// handleSetControlFlagsHostCmd
+//
+// Sets the unsigned int controlFlags variable to the value of the next two
+// bytes in pSocket, in MSB/LSB order.
+//
+// The controlFlags are set by the host to control the functionality of the
+// Rabbit module.
+//
+// On success, returns the number of bytes read from the packet.
+// On checksum error for received packet, returns -1.
+// If received packet too small, returns -1.
+//
+
+int handleSetControlFlagsHostCmd(tcp_Socket *pSocket, int pPktID)
+{
+
+   char buffer[3];
+   int result;
+   int x = 0;
+
+   //read in the remainder of the packet
+   result = readBytesAndVerify(pSocket, buffer, 3, pPktID);
+   if (result < 0) return(result);
+
+	controlFlags = (unsigned)((buffer[x++]<<8) & 0xff00)
+                                  + (unsigned)(buffer[x++] & 0xff);
+
+   return(3); //return number of bytes read from socket
+
+}//end of handleSetControlFlagsHostCmd
+//----------------------------------------------------------------------------
+
+ //----------------------------------------------------------------------------
+// handleResetTrackCountersHostCmd
+//
+// Resets all Track counters in the DSPs by pulsing the Track Sync Reset line.
+//
+// This will be ignored in certain modes such as those which already reset the
+// counters in response to other inputs.
+//
+
+int handleResetTrackCountersHostCmd(tcp_Socket *socket, int pPktID)
+{
+
+   int x, result;
+   char buffer[2];
+
+   //read in the remainder of the packet
+   result = readBytesAndVerify(socket, buffer, 2, pPktID);
+   if (result < 0) return(result);
+
+   //trigger other code to pulse the reset line
+	resetPulseTrack = TRUE;
+
+   return(2); //return number of bytes read from socket
+
+}//end of handleResetTrackCountersHostCmd
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -1727,12 +2087,12 @@ void countTimerBInts()
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// startMonitor
+// handleStartMonitorHostCmd
 //
 // Starts the monitor mode.
 //
 
-int startMonitor(tcp_Socket *socket, int pPktID)
+int handleStartMonitorHostCmd(tcp_Socket *socket, int pPktID)
 {
 
    int x, result;
@@ -1751,22 +2111,37 @@ int startMonitor(tcp_Socket *socket, int pPktID)
    //initialize previous state of inputs to the current states
 
 
+   //WIP HSS// read values from Master PIC //DEBUG HSS//
+
+   prevEnc1A = BitRdPortI(PADR, ENC1A);
+   prevEnc1B = BitRdPortI(PADR, ENC1B);
+   prevEnc2A = BitRdPortI(PADR, ENC2A);
+   prevEnc2B = BitRdPortI(PADR, ENC2B);
+   prevUnused1 = BitRdPortI(PADR, UNUSED1);
+   prevUnused2 = BitRdPortI(PADR, UNUSED2);
+   prevInspect = BitRdPortI(PADR, INSPECT);
+   prevUnused3 = BitRdPortI(PADR, UNUSED3);
+   prevTDC = BitRdPortI(PEDR, TDC);
+   prevUnused4 = BitRdPortI(PEDR, UNUSED4);
+   prevSlotAddr = ~(RdPortI(PBDR) | 0xfff0);
+   prevChassisAddr = ~((RdPortI(PBDR) >> 4) | 0xfff0 );
+
    sendMonitorPacket = TRUE; //force update first time through
 
    printf("Monitor mode started...\n");
 
    monitorMode = TRUE;  //inititate calling of the monitor function
 
-}//end of startMonitor
+}//end of handleStartMonitorHostCmd
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// stopMonitor
+// handleStopMonitorHostCmd
 //
 // Stops the monitor mode.
 //
 
-int stopMonitor(tcp_Socket *socket, int pPktID)
+int handleStopMonitorHostCmd(tcp_Socket *socket, int pPktID)
 {
 
    int x, result;
@@ -1780,7 +2155,66 @@ int stopMonitor(tcp_Socket *socket, int pPktID)
 
    monitorMode = FALSE;  //stop calling of the monitor function
 
-}//end of stopMonitor
+}//end of handleStopMonitorHostCmd
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// calculateEncoderCountsPerSec
+//
+// Calculates the encoder counts per second. A new counts/sec is
+// calculated base on the counts and elapsed time since the last call to this
+// function.
+//
+
+void calculateEncoderCountsPerSec(long pCountBTemp,
+							long pEnc1Cnt, long pEnc2Cnt,
+							int *pEnc1CntsPerSec, int *pEnc2CntsPerSec)
+{
+
+	double timeCounts;
+	double encCounts;
+
+	//process Encoder 1 values
+
+	//get number of encoder counts since last calculation
+   encCounts = pEnc1Cnt - prevEnc1CntsForCPS;
+   prevEnc1CntsForCPS = pEnc1Cnt;
+
+   //get number of timer B counts since last calculation
+   timeCounts = pCountBTemp - prevEncCPSTmrCnt;
+   prevEncCPSTmrCnt = pCountBTemp;
+
+	//calculate rate based on timer B frequency
+
+   if(timeCounts > 0){
+	   *pEnc1CntsPerSec =
+      					(int)floor((encCounts / timeCounts * TIMERB_FREQ) + 0.5);
+	}else{
+		*pEnc1CntsPerSec = 0;
+   }
+
+   //only allow calibration in the foward direction
+   if (*pEnc1CntsPerSec < 0) {*pEnc1CntsPerSec = 0; }
+
+	//process Encoder 2 values
+
+	//get number of encoder counts since last calculation
+   encCounts = pEnc2Cnt - prevEnc2CntsForCPS;
+   prevEnc2CntsForCPS = pEnc2Cnt;
+
+	//calculate rate based on timer B frequency
+
+   if(timeCounts > 0){
+	   *pEnc2CntsPerSec =
+      				  (int)floor((encCounts / timeCounts * TIMERB_FREQ) + 0.5);
+   }else{
+	   *pEnc2CntsPerSec = 0;
+   }
+
+   //only allow calibration in the foward direction
+   if (*pEnc2CntsPerSec < 0) {*pEnc2CntsPerSec = 0; }
+
+}//end of calculateEncoderCountsPerSec
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -1792,10 +2226,177 @@ int stopMonitor(tcp_Socket *socket, int pPktID)
 int processMonitor(tcp_Socket *socket)
 {
 
+	//WIP HSS// read in bytes from Master PIC!! //DEBUG HSS//
+
    int pktSize = 25;
    char  buffer[25];
    int x = 0;
+   int pEnc1CntsPerSec = 0, pEnc2CntsPerSec = 0;
 
+   // PLC sends a high to drive the opto isolator - inverted to low to Rabbit
+   //
+   // PLC sends a high during Inspection - Rabbit reads low.
+   // PLC sends a high when Carriage on Pipe - Rabbit reads low.
+   // PLC sends a high when TDC marker is at TDC - Rabbit reads low.
+
+   //check all inputs, send new status if changed from previous state
+
+   //this part makes sure a quick transition gets transmitted to the host
+   //even if the host is requesting periodic updates which might miss the
+   //the event
+
+   //don't send packet for every change in encoder inputs as this would
+   //be too much data - if the encoders are turned slowly enough, the events
+   //can be seen by the host when requesting periodic updates
+
+   if (BitRdPortI(PADR, ENC1A) != prevEnc1A){
+      prevEnc1A = BitRdPortI(PADR, ENC1A);
+      //sendMonitorPacket = TRUE; don't transmit on change - see note above
+   }
+
+   if (BitRdPortI(PADR, ENC1B) != prevEnc1B){
+      prevEnc1B = BitRdPortI(PADR, ENC1B);
+      //sendMonitorPacket = TRUE; don't transmit on change - see note above
+   }
+
+   if (BitRdPortI(PADR, ENC2A) != prevEnc2A){
+      prevEnc2A = BitRdPortI(PADR, ENC2A);
+      //sendMonitorPacket = TRUE; don't transmit on change - see note above
+   }
+
+   if (BitRdPortI(PADR, ENC2B) != prevEnc2B){
+      prevEnc2B = BitRdPortI(PADR, ENC2B);
+      //sendMonitorPacket = TRUE; don't transmit on change - see note above
+   }
+
+   if (BitRdPortI(PADR, UNUSED1) != prevUnused1){
+      prevUnused1 = BitRdPortI(PADR, UNUSED1);
+      sendMonitorPacket = TRUE;
+   }
+
+   if (BitRdPortI(PADR, UNUSED2) != prevUnused2){
+      prevUnused2 = BitRdPortI(PADR, UNUSED2);
+      sendMonitorPacket = TRUE;
+   }
+
+   if (BitRdPortI(PADR, INSPECT) != prevInspect){
+      prevInspect = BitRdPortI(PADR, INSPECT);
+      sendMonitorPacket = TRUE;
+   }
+
+   if (BitRdPortI(PADR, UNUSED3) != prevUnused3){
+      prevUnused3 = BitRdPortI(PADR, UNUSED3);
+      sendMonitorPacket = TRUE;
+   }
+
+   if (BitRdPortI(PEDR, UNUSED4) != prevUnused4){
+      prevUnused4 = BitRdPortI(PBDR, UNUSED4);
+      sendMonitorPacket = TRUE;
+   }
+
+   //read the board's chassis and slot number from PortB which is connected to
+   //the rotary switches on the motherboard
+
+   // slot number is lower nibble of Port B inputs inverted
+   slotAddr = ~(RdPortI(PBDR) | 0xfff0);
+
+   if (slotAddr != prevSlotAddr){
+      prevSlotAddr = slotAddr;
+      sendMonitorPacket = TRUE;
+   }
+
+   // chassis number is upper nibble of Port B inputs inverted
+   chassisAddr = ~((RdPortI(PBDR) >> 4) | 0xfff0 );
+
+   if (chassisAddr != prevChassisAddr){
+      chassisAddr = chassisAddr;
+      sendMonitorPacket = TRUE;
+   }
+
+   if (sendMonitorPacket == TRUE){
+
+      x = 0;
+
+      if (BitRdPortI(PADR, ENC1A)) buffer[x++] = 0;
+      else buffer[x++] = 1;
+
+      if (BitRdPortI(PADR, ENC1B)) buffer[x++] = 0;
+      else  buffer[x++] = 1;
+
+      if (BitRdPortI(PADR, ENC2A)) buffer[x++] = 0;
+      else  buffer[x++] = 1;
+
+      if (BitRdPortI(PADR, ENC2B)) buffer[x++] = 0;
+      else  buffer[x++] = 1;
+
+      if (BitRdPortI(PADR, UNUSED1)) buffer[x++] = 0;
+      else  buffer[x++] = 1;
+
+      if (BitRdPortI(PADR, UNUSED2)) buffer[x++] = 0;
+      else  buffer[x++] = 1;
+
+      if (BitRdPortI(PADR, INSPECT)) buffer[x++] = 0;
+      else  buffer[x++] = 1;
+
+      if (BitRdPortI(PADR, UNUSED3)) buffer[x++] = 0;
+      else  buffer[x++] = 1;
+
+      if (BitRdPortI(PEDR, TDC)) buffer[x++] = 0;
+      else  buffer[x++] = 1;
+
+      if (BitRdPortI(PEDR, UNUSED4)) buffer[x++] = 0;
+      else  buffer[x++] = 1;
+
+      buffer[x++] = chassisAddr;
+
+      buffer[x++] = slotAddr;
+
+      buffer[x++] = inspectionStatus;
+
+      buffer[x++] = (rpm >> 8) & 0xff;
+      buffer[x++] = rpm & 0xff;
+
+      buffer[x++] = (rpmVariance >> 8) & 0xff;
+      buffer[x++] = rpmVariance & 0xff;
+
+      // retrieve the encoder count values
+      encAccessFlag = 1; // block the ISR from modifying
+      enc1CntTemp.lVal = encoder1Count; //snag the values to local variables
+      enc2CntTemp.lVal = encoder2Count;
+      encAccessFlag = 0; // unblock the ISR
+
+      //place the encoder 1 values into the buffer by byte, MSB first
+      buffer[x++] = enc1CntTemp.cVal[3];
+      buffer[x++] = enc1CntTemp.cVal[2];
+      buffer[x++] = enc1CntTemp.cVal[1];
+      buffer[x++] = enc1CntTemp.cVal[0];
+
+      //place the encoder 2 values into the buffer by byte, MSB first
+      buffer[x++] = enc2CntTemp.cVal[3];
+      buffer[x++] = enc2CntTemp.cVal[2];
+      buffer[x++] = enc2CntTemp.cVal[1];
+      buffer[x++] = enc2CntTemp.cVal[0];
+
+      //calculate the encoder counts/sec and add to buffer, MSB first
+
+		calculateEncoderCountsPerSec(countBTemp,
+							enc1CntTemp.lVal, enc2CntTemp.lVal,
+							&pEnc1CntsPerSec, &pEnc2CntsPerSec);
+
+      buffer[x++] = (pEnc1CntsPerSec >> 8) & 0xff;
+      buffer[x++] = pEnc1CntsPerSec & 0xff;
+
+      buffer[x++] = (pEnc2CntsPerSec >> 8) & 0xff;
+      buffer[x++] = pEnc2CntsPerSec & 0xff;
+
+      //send the buffer to host
+      sendPacketHeader(socket, GET_MONITOR_PACKET_CMD);
+      sock_flushnext(socket);
+      sock_write(socket,buffer,x);
+
+   }// if (inputChanged == 1)
+
+   sendMonitorPacket = FALSE; //don't update again until change detected
 
    return(0);
 
@@ -1946,25 +2547,13 @@ void setupTimerBInt()
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
-// initRegisters
+// setupPortB
 //
-// Sets up all ports and registers.
+// Sets up all ports and registers for Port B
 //
 
-void initRegisters()
+void setupPortB()
 {
-
-   // bit  7   = 1   - Ignore the SMODE pins program fetch function
-   // bits 6:5 = 00  - Read only, states of SMODE pins, write with 0
-   // bits 4:2 = 000 - Disable auxiliary I/O bus, Port A and Port B are I/O
-   // bits 1:0 = 00  - Disable slave port interrupts
-   // note that this also sets Port A to inputs
-
-   WrPortI(SPCR, &SPCRShadow, 0x80);
-
-   //------------ Setup Port A ------------
-
-   //all necessary setup performed by writing to SPCR above
 
    //------------ Setup Port B ------------
 
@@ -1979,150 +2568,7 @@ void initRegisters()
 
    WrPortI(PBDDR, &PBDDRShadow, 0xff);
 
-//debug mks ~ testing port b outputs
-
-#asm
-	ld		a, (PBDRShadow)
-	res	0, a
-	res	1, a
-	res	2, a
-	res	3, a
-	ld		(PBDRShadow), a
-	ioi	ld (PBDR), a
-	ld		a, (PBDDRShadow)
-	set	0, a
-	set	1, a
-	set	2, a
-	set	3, a
-	ld		(PBDDRShadow), a
-	ioi	ld (PBDDR), a
-#endasm
-//debug mks end
-
-
-
-
-   //------------ Setup Port C ------------
-
-   // C Port 0 - UT Bank Sync Output
-   // C Port 1 - External Output 1
-   // C Port 2 - UT Bank Sync Reset Output
-   // C Port 3 - External Output 2
-   // C Port 4 - Track Sync Output
-   // C Port 5 - External Output 3
-   // C Port 6 - output, Serial I/O by Dynamic C (do not modify)
-   // C Port 7 - External Output 4 (also used by Dynamic C, see below)
-   //             (should be changed to C Port 4 on board ver 1.2 - this should
-   //              have been done on ver 1.1 but was overlooked)
-   //            The idea is to swap Bank Sync/Reset with Track Sync/Reset
-   //             as the Control board will rarely if ever drive the Bank signals.
-   //             Thus, PortC bits 6,7 could be left as serial debugger
-   //             communication pins.
-
-   // NOTE - 6 & 7 are used by the Dynamic C debugger - if they are changed
-   //    the debugger will be disabled
-   // C Port 6 - on init ~ output, Serial I/O by Dynamic C
-   // C Port 7 - on init ~ input, Serial I/O by Dynamic C
-
-   // See RabbitCore RCM4200 User's Manual, page 29 for initialization states.
-
-   // NOTE NOTE
-   // For all board versions:
-   // to use the debugger, use masks to leave PC6,PC7 unmodified as used by
-   // Dynamic C link to host
-   // For board version 1.0, this means cannot use Output 4 and one of the syncs
-   // For board version 1.1, this means cannot use Output 4
-
-   // set all usable C ports to driven (not open drain)
-   // use mask to avoid modifying P6,P7 which are used by debugger
-   WrPortI(PCDCR, &PCDCRShadow, (PCDCRShadow & 0xc0));
-
-   // set all usable C ports function as I/O
-   // use mask to avoid modifying P6,P7 which are used by debugger
-   WrPortI(PCFR, &PCFRShadow, (PCFRShadow & 0xC0));
-
-   // set bits P0-P5 to outputs
-   // use mask to avoid modifying P6,P7 which are used by debugger
-   WrPortI(PCDDR, &PCDDRShadow, (PCDDRShadow & 0xC0) | 0x3f);
-
-   //set all Port C outputs to 1, which turns off the optoisolator - inactive
-
-   BitWrPortI(PCDR, &PCDRShadow, 1, OUTPUT1); //PC1
-   BitWrPortI(PCDR, &PCDRShadow, 1, OUTPUT2); //PC3
-   BitWrPortI(PCDR, &PCDRShadow, 1, OUTPUT3); //PC5
-   // don't set OUTPUT4 (PC7) or it will disrupt the debugger
-   // put this back in when OUTPUT4 is changed to PC4 for board ver 1.2
-   //BitWrPortI(PCDR, &PCDRShadow, 1, OUTPUT4); //PC7
-   //BitWrPortI(PCDR, &PCDRShadow, 1, TRACK_SYNC); //PC0
-   //BitWrPortI(PCDR, &PCDRShadow, 1, TRACK_SYNC_RESET); //PC2
-   // don't set (PC6) or it will disrupt the debugger
-   //BitWrPortI(PCDR, &PCDRShadow, 1, 6);
-
-   //------------ Setup Port D ------------
-
-   // Port D cannot be used as digital I/O as the default jumper settings
-   // connect the board's I/O pins to be analog inputs rather than Port D I/O
-
-   //------------ Setup Port E ------------
-
-   // Note: The data sheet says that using a typical read-modify-write operation
-   // for Ports D and E can lead to old data being written to the port due to
-   // those ports being buffered.  Actually, all the ports are buffered -- the
-   // data is transferred to the outputs on the next clock edge.  However, for
-   // ports A, B, and C, this clock is always the peripheral clock which runs at
-   // as slow as main clock / 8.
-   //
-   // On the other hand, Ports D & E may also be clocked by other timers which
-   // might be much slower.  So if you read the port to modify a single bit and
-   // then write it back, you could read old data if the data previously written
-   // to the port buffer had not net been clocked to the output port -- the read
-   // operation reads the actual port pins while the write operation writes to a
-   // buffer which is not transferred until the next clock.
-   //
-   // For this reason, any single bit can be set for Ports D & E -- special one
-   // bit ports have been provided for this purpose to avoid having to read the
-   // old port data to modify the one bit.
-   //
-   // It would seem that this *could* also happen for ports A/B/C, but perhaps
-   // it is more unlikely because the peripheral clock generally runs fairly
-   // fast compared with the main clock and would be totally predictable so the
-   // program could avoid another modify operation until the next clocking.
-   // It would be a lot more difficult to determine this required delay for
-   // ports D/E if they were being clocked by a much slower clock.
-   //
-   // The BitWrPortI command reads from a shadow register to get the current
-   // value of the port buffer which will or already has been transferred to
-   // the output pins, so this data is always fresh and no worries about
-   // reading old data from the pins.
-   //
-
-   // Port E is buffered -- data is transferred out on the next clock edge
-   // it is assumed that PECR has been set up by Dynamic C to transfer the
-   // outputs by the peripheral clock
-
-   // PEDDR -- set I/O direction for pin used by program -- others unchanged
-   // PE0, PE1 : inputs, PE3, PE4 : outputs
-   // PE2 is used for the Ethernet chip select -- DO NOT DISTURB --
-   // use mask to avoid modifying ports not used by this program
-   // DO NOT change PE7  config -- used to access serial Flash for updating
-   // firmware.  If it is changed here, it must be changed back for code upload.
-
-   WrPortI(PEDDR, &PEDDRShadow, (PEDDRShadow & 0xe4) | 0x18);
-
-   // PEDCR -- set pins to PE3 & PE4 to driven as opposed to open drain
-   // use mask to avoid modifying ports not used by this program
-
-   WrPortI(PEDCR, &PEDCRShadow, (PEDCRShadow & 0xe4) | 0x00);
-
-   // PEFR -- set pins to act as I/O and not alternate function
-   WrPortI(PEFR, &PEFRShadow, (PEFRShadow & 0xe4) | 0x00);
-
-   // inactivate the Pulse sync triggers
-
-   //BitWrPortI(PEDR, &PEDRShadow, 1, PULSE_SYNC);
-   //BitWrPortI(PEDR, &PEDRShadow, 1, PULSE_SYNC_RESET);
-
-}//end of initRegisters
+}//end of setupPortB
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -2677,6 +3123,56 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
    else
 	if (pktID == SET_CLOCK_CMD){
    	return handleSetClockHostCmd(socket, pktID); }
+   else
+   if (pktID == GET_INSPECT_PACKET_CMD)  {
+   	return handleGetInspectPacketHostCmd(socket, pktID); }
+   else
+   if (pktID == START_MONITOR_CMD) {
+   	return handleStartMonitorHostCmd(socket, pktID); }
+   else
+   if (pktID == STOP_MONITOR_CMD) {
+   	return handleStopMonitorHostCmd(socket, pktID); }
+   else
+   // set encoder counts to 0
+   if (pktID == ZERO_ENCODERS_CMD) {
+   	return handleZeroEncoderCountsHostCmd(socket, pktID); }
+   else
+   // pulse the specified output(s)
+   if (pktID == PULSE_OUTPUT_CMD) {
+   	return handlePulseOutputHostCmd(socket, pktID); }
+   else
+   // turn on the specified output(s)
+   if (pktID == TURN_ON_OUTPUT_CMD) {
+   	return handleTurnOnOutputHostCmd(socket, pktID); }
+   else
+   // turn off the specified output(s)
+   if (pktID == TURN_OFF_OUTPUT_CMD) {
+   	return handleTurnOffOutputHostCmd(socket, pktID); }
+   else
+   // set the number of encoder count change to trigger update to host
+   if (pktID == SET_ENCODERS_DELTA_TRIGGER_CMD) {
+      return handleSetEncodersDeltaTriggerHostCmd(socket, pktID); }
+   else
+   // enter inspection mode
+   if (pktID == START_INSPECT_CMD) {
+		return handleStartInspectHostCmd(socket, pktID); }
+   else
+   // exit inspection mode
+   if (pktID == STOP_INSPECT_CMD) {
+   	return handleStopInspectHostCmd(socket, pktID); }
+   else
+   // force a monitor packet to be sent to the host
+   if (pktID == GET_MONITOR_PACKET_CMD) {
+   	return handleGetMonitorPacketHostCmd(socket, pktID); }
+	else
+   if (pktID == SET_CONTROL_FLAGS_CMD) {
+   	return handleSetControlFlagsHostCmd(socket, pktID); }
+   else
+   if (pktID == RESET_TRACK_COUNTERS_CMD) {
+   	return handleResetTrackCountersHostCmd(socket, pktID); }
+	else
+   if (pktID == GET_ALL_ENCODER_VALUES_CMD) {
+      return handleGetAllEncoderValuesHostCmd(socket, pktID); }
 
    return 0;
 
@@ -2720,8 +3216,8 @@ main()
 
    setupSerialPortD();
 
-   // setup all registers and I/O ports
-	//initRegisters();
+   // setup all Port Bregisters and I/O ports
+	setupPortB();
 
    // setup the Timber B interrupt and install the Interrupt Service Routine
    // to track the encoder inputs
@@ -2741,36 +3237,6 @@ main()
       //this is the main processing loop
 
       do{
-
-//debug mks ~ testing port b outputs
-
-
-#asm
-
-	ld		a, (PBDRShadow)
-	set	0, a
-	set	1, a
-	set	2, a
-	set	3, a
-	ld		(PBDRShadow), a
-	ioi	ld (PBDR), a
-
-	ld		a, (PBDRShadow)
-	res	0, a
-	res	1, a
-	res	2, a
-	res	3, a
-	ld		(PBDRShadow), a
-	ioi	ld (PBDR), a
-
-#endasm
-//debug mks end
-
-
-      	//DEBUG HSS// remove later
-   		WrPortI(PBDR, &PBDRShadow, 0xff);
-//			BitWrPortI(PBDR, &PBDRShadow, 0, 2);
-         //DEBUG HSS// end remove later
 
          //process any data packets received from the host
          // return value of -1 means packet size, checksum, or execution error
