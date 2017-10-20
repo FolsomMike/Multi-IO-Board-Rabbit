@@ -272,6 +272,7 @@ int masterPICPktChecksum = 0;
 char hostPktHeader[4] = {0xaa, 0x55, 0xbb, 0x66};
 
 unsigned timerb_match; // match value
+long countBTemp;
 long timerBCount; //incremented with each timerb interrupt
 long prevCountBTemp;
 char countBAccessFlag;	// used to prevent ISR updating counter values while
@@ -325,11 +326,8 @@ int resetPulseTrack = FALSE;
 //----------------------------------------------------------------------------
 // Global Variables for Monitor Function
 
+int prevSyncReset, prevSync;
 int prevEnc1A, prevEnc1B, prevEnc2A, prevEnc2B;
-int prevInspect, prevTDC;
-int prevUnused1, prevUnused2, prevUnused3, prevUnused4;
-int chassisAddr, slotAddr;
-int prevChassisAddr, prevSlotAddr;
 
 union {
 	long lVal;
@@ -413,6 +411,9 @@ long prevEnc1Cnt, prevEnc2Cnt;
 #define RBT_GET_ALL_LAST_AD_VALUES_CMD 8
 #define RBT_SET_LOCATION_CMD 9
 #define RBT_SET_CLOCK_CMD 10
+#define RBT_START_MONITOR_CMD 11
+#define RBT_STOP_MONITOR_CMD 12
+#define RBT_GET_MONITOR_PKT_CMD 13
 
 //----------------------------------------------------------------------------
 // sendBytesViaSerialPortD
@@ -1086,13 +1087,6 @@ int handleGetRunDataHostCmd(tcp_Socket *pSocket, int pPktID)
 	result = readBytesAndVerify(pSocket, buffer, numBytesInPkt, pPktID);
 	if (result < numBytesInPkt){ return(result); }
 
-   //DEBUG HSS// Port B, bit 2, is set here because it is the start of the
-   //Rabbit requesting run data from the Master PIC. Set high here and low
-   //after all data received from Master PIC so pulses can be measured with
-   //scope
-	BitWrPortI(PBDR, &PBDRShadow, 1, 2);
-   //DEBUG HSS// end remove later
-
 	sendPacketViaSerialPortD(RBT_GET_RUN_DATA_CMD, 1, 0);
 
    return(result); //return number of bytes read from socket
@@ -1121,13 +1115,6 @@ int handleGetRunDataPICCmd(tcp_Socket *pSocket, int pPktLength, int pPktID)
    //read in the remainder of the packet
    result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
 	if (result < numBytesInPkt){ return(result); }
-
-    //DEBUG HSS// Port B, bit 2, is set low here because it is the end of the
-   //Rabbit requesting run data from the Master PIC. Set low here and high right
-   //before all data requested from Master PIC so pulses can be measured with
-   //scope
-   BitWrPortI(PBDR, &PBDRShadow, 0, 2);
-   //DEBUG HSS// end remove later
 
    //place Rabbit run data packet count in a buffer
    i = 0;
@@ -1287,6 +1274,271 @@ int handleGetAllLastADValuesPICCmd(
    return(result); //return number of bytes read from socket
 
 }//end of handleGetAllLastADValuesPICCmd
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// calculateEncoderCountsPerSec
+//
+// Calculates the encoder counts per second. A new counts/sec is
+// calculated base on the counts and elapsed time since the last call to this
+// function.
+//
+
+void calculateEncoderCountsPerSec(long pCountBTemp,
+							long pEnc1Cnt, long pEnc2Cnt,
+							int *pEnc1CntsPerSec, int *pEnc2CntsPerSec)
+{
+
+	double timeCounts;
+	double encCounts;
+
+	//process Encoder 1 values
+
+	//get number of encoder counts since last calculation
+   encCounts = pEnc1Cnt - prevEnc1CntsForCPS;
+   prevEnc1CntsForCPS = pEnc1Cnt;
+
+   //get number of timer B counts since last calculation
+   timeCounts = pCountBTemp - prevEncCPSTmrCnt;
+   prevEncCPSTmrCnt = pCountBTemp;
+
+	//calculate rate based on timer B frequency
+
+   if(timeCounts > 0){
+	   *pEnc1CntsPerSec =
+      					(int)floor((encCounts / timeCounts * TIMERB_FREQ) + 0.5);
+	}else{
+		*pEnc1CntsPerSec = 0;
+   }
+
+   //only allow calibration in the foward direction
+   if (*pEnc1CntsPerSec < 0) {*pEnc1CntsPerSec = 0; }
+
+	//process Encoder 2 values
+
+	//get number of encoder counts since last calculation
+   encCounts = pEnc2Cnt - prevEnc2CntsForCPS;
+   prevEnc2CntsForCPS = pEnc2Cnt;
+
+	//calculate rate based on timer B frequency
+
+   if(timeCounts > 0){
+	   *pEnc2CntsPerSec =
+      				  (int)floor((encCounts / timeCounts * TIMERB_FREQ) + 0.5);
+   }else{
+	   *pEnc2CntsPerSec = 0;
+   }
+
+   //only allow calibration in the foward direction
+   if (*pEnc2CntsPerSec < 0) {*pEnc2CntsPerSec = 0; }
+
+}//end of calculateEncoderCountsPerSec
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// processMonitor
+//
+// Sends to host the status of all inputs when any input changes.
+//
+
+int processMonitor(tcp_Socket *pSocket)
+{
+
+   char  buffer[27];
+   int x = 0;
+   int pEnc1CntsPerSec = 0, pEnc2CntsPerSec = 0;
+
+   // PLC sends a high to drive the opto isolator - inverted to low to Rabbit
+   //
+   // PLC sends a high during Inspection - Rabbit reads low.
+   // PLC sends a high when Carriage on Pipe - Rabbit reads low.
+   // PLC sends a high when TDC marker is at TDC - Rabbit reads low.
+
+   //check all inputs, send new status if changed from previous state
+
+   //this part makes sure a quick transition gets transmitted to the host
+   //even if the host is requesting periodic updates which might miss the
+   //the event
+
+   //don't send packet for every change in encoder inputs as this would
+   //be too much data - if the encoders are turned slowly enough, the events
+   //can be seen by the host when requesting periodic updates
+
+   if (sendMonitorPacket == TRUE){
+
+      x = 0;
+
+      if (prevSyncReset) buffer[x++] = 0;
+      else buffer[x++] = 1;
+
+      if (prevSync) buffer[x++] = 0;
+      else buffer[x++] = 1;
+
+      if (prevEnc1A) buffer[x++] = 0;
+      else buffer[x++] = 1;
+
+      if (prevEnc1B) buffer[x++] = 0;
+      else  buffer[x++] = 1;
+
+      if (prevEnc2A) buffer[x++] = 0;
+      else  buffer[x++] = 1;
+
+      if (prevEnc2B) buffer[x++] = 0;
+      else  buffer[x++] = 1;
+
+      //filler stuff to match expected number of input bytes (10)
+      buffer[x++] = 0;
+      buffer[x++] = 0;
+		buffer[x++] = 0;
+      buffer[x++] = 0;
+
+      //DEBUG HSS// temp sending of fake values
+
+     	//DEBUG HSS// remove
+
+      buffer[x++] = 0;  //inspection status
+      buffer[x++] = 0;  //rpm uppper
+      buffer[x++] = 0;	//rpm lower
+      buffer[x++] = 0;	//variance upper
+      buffer[x++] = 0;	//variance lower
+
+		//DEBUG HSS// end remove
+
+      //DEBUG HSS// uncomment
+      //buffer[x++] = inspectionStatus;
+
+      //buffer[x++] = (rpm >> 8) & 0xff;
+      //buffer[x++] = rpm & 0xff;
+
+      //buffer[x++] = (rpmVariance >> 8) & 0xff;
+      //buffer[x++] = rpmVariance & 0xff;
+      //DEBUG HSS// end uncomment
+
+      //DEBUG HSS// end temp sending of fake values
+
+      // retrieve the encoder count values
+      encAccessFlag = 1; // block the ISR from modifying
+      enc1CntTemp.lVal = encoder1Count; //snag the values to local variables
+      enc2CntTemp.lVal = encoder2Count;
+      encAccessFlag = 0; // unblock the ISR
+
+      //place the encoder 1 values into the buffer by byte, MSB first
+      buffer[x++] = enc1CntTemp.cVal[3];
+      buffer[x++] = enc1CntTemp.cVal[2];
+      buffer[x++] = enc1CntTemp.cVal[1];
+      buffer[x++] = enc1CntTemp.cVal[0];
+
+      //place the encoder 2 values into the buffer by byte, MSB first
+      buffer[x++] = enc2CntTemp.cVal[3];
+      buffer[x++] = enc2CntTemp.cVal[2];
+      buffer[x++] = enc2CntTemp.cVal[1];
+      buffer[x++] = enc2CntTemp.cVal[0];
+
+      //calculate the encoder counts/sec and add to buffer, MSB first
+		calculateEncoderCountsPerSec(countBTemp,
+							enc1CntTemp.lVal, enc2CntTemp.lVal,
+							&pEnc1CntsPerSec, &pEnc2CntsPerSec);
+
+      buffer[x++] = (pEnc1CntsPerSec >> 8) & 0xff;
+      buffer[x++] = pEnc1CntsPerSec & 0xff;
+
+      buffer[x++] = (pEnc2CntsPerSec >> 8) & 0xff;
+      buffer[x++] = pEnc2CntsPerSec & 0xff;
+
+      //send the buffer to host
+      //DEBUG HSS//sendPacketHeader(pSocket, GET_MONITOR_PACKET_CMD);
+      //DEBUG HSS//      sock_flushnext(pSocket); UNNCOMMENT LATER
+            //DEBUG HSS//sock_write(pSocket,buffer,x);
+
+   }// if (inputChanged == 1)
+
+   sendMonitorPacket = FALSE; //don't update again until change detected
+
+   return(0);
+
+}//end of processMonitor
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// handleGetMonitorPacketPICCmd
+//
+// Read in the monitor packet from the PIC, store the values, and then call
+// the process monitor function.
+//
+
+int handleGetMonitorPacketPICCmd(
+	 									tcp_Socket *pSocket, int pPktLength, int pPktID)
+{
+
+   char buf1[1], buf2[5];
+   int i;
+   int result;
+   int debugValue;
+   int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
+
+   waitingForPICResponse = FALSE;
+
+   //read in the remainder of the packet
+
+   result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
+	if (result < numBytesInPkt){
+	   printf("result was bad, did not match bytes expected");//DEBUG HSS//
+    return(result); }
+
+   reSyncCount = 0; pktError = 0; reSyncSPCount = 0; pktSPError = 0;
+
+   //store values from PIC if they have changed
+	// Bit values in received byte
+	//    0 = SYNC_RESET
+	//    1 = SYNC
+	//    2 = ENC1A
+	//    3 = ENC1B
+	//    4 = ENC2A
+	//    5 = ENC2B
+	//    6 = unused
+	//    7 = unused
+
+   i = 0;
+
+   if ((buf2[i] & 0x01) != prevSyncReset) {
+		prevSyncReset = (buf2[i] & 0x01);
+		sendMonitorPacket = TRUE;
+   }
+
+   if ((buf2[i] & 0x02) != prevSync) {
+		prevSync = (buf2[i] & 0x02);
+		sendMonitorPacket = TRUE;
+   }
+
+	if ((buf2[i] & 0x03) != prevEnc1A) {
+		prevEnc1A = (buf2[i] & 0x03);
+      //sendMonitorPacket = TRUE; don't transmit on change - see note above
+   }
+
+	if ((buf2[i] & 0x04) != prevEnc1B){
+      prevEnc1B = (buf2[i] & 0x04);
+      //sendMonitorPacket = TRUE; don't transmit on change - see note above
+   }
+
+	i++; //increment to next char in buffer
+
+	if ((buf2[i] & 0x05) != prevEnc2A){
+      prevEnc2A = (buf2[i] & 0x05);
+      //sendMonitorPacket = TRUE; don't transmit on change - see note above
+   }
+
+	i++; //increment to next char in buffer
+
+	if ((buf2[i] & 0x06) != prevEnc2B){
+      prevEnc2B = (buf2[i] & 0x06);
+      //sendMonitorPacket = TRUE; don't transmit on change - see note above
+   }
+
+   processMonitor(pSocket);
+
+   return(result); //return number of bytes read from socket
+
+}//end of handleGetMonitorPacketPICCmd
 //----------------------------------------------------------------------------
 
 //-----------------------------------------------------------------------------
@@ -1825,7 +2077,6 @@ int sendInspectPacket(tcp_Socket *socket)
 
 void processInspect(tcp_Socket *socket)
 {
-	//WIP HSS// probably need to read values from Master PIC //DEBUG HSS//
 
 	// retrieve the encoder count values
    encAccessFlag = 1; // block the ISR from modifying
@@ -1899,6 +2150,7 @@ int handleGetMonitorPacketHostCmd (tcp_Socket *socket, int pPktID)
 
    //set flag to trigger send
    sendMonitorPacket = TRUE;
+   sendPacketViaSerialPortD(RBT_GET_MONITOR_PKT_CMD, 1, 0);
 
 }//end of handleGetMonitorPacketHostCmd
 //----------------------------------------------------------------------------
@@ -2108,29 +2360,12 @@ int handleStartMonitorHostCmd(tcp_Socket *socket, int pPktID)
    // PLC sends a high when Carriage on Pipe - Rabbit reads low.
    // PLC sends a high when TDC marker is at TDC - Rabbit reads low.
 
-   //initialize previous state of inputs to the current states
-
-
-   //WIP HSS// read values from Master PIC //DEBUG HSS//
-
-   prevEnc1A = BitRdPortI(PADR, ENC1A);
-   prevEnc1B = BitRdPortI(PADR, ENC1B);
-   prevEnc2A = BitRdPortI(PADR, ENC2A);
-   prevEnc2B = BitRdPortI(PADR, ENC2B);
-   prevUnused1 = BitRdPortI(PADR, UNUSED1);
-   prevUnused2 = BitRdPortI(PADR, UNUSED2);
-   prevInspect = BitRdPortI(PADR, INSPECT);
-   prevUnused3 = BitRdPortI(PADR, UNUSED3);
-   prevTDC = BitRdPortI(PEDR, TDC);
-   prevUnused4 = BitRdPortI(PEDR, UNUSED4);
-   prevSlotAddr = ~(RdPortI(PBDR) | 0xfff0);
-   prevChassisAddr = ~((RdPortI(PBDR) >> 4) | 0xfff0 );
-
-   sendMonitorPacket = TRUE; //force update first time through
+	// tell Master PIC to start Monitoring
+   sendPacketViaSerialPortD(RBT_START_MONITOR_CMD, 1, 0);
 
    printf("Monitor mode started...\n");
 
-   monitorMode = TRUE;  //inititate calling of the monitor function
+	return (result);
 
 }//end of handleStartMonitorHostCmd
 //----------------------------------------------------------------------------
@@ -2151,256 +2386,14 @@ int handleStopMonitorHostCmd(tcp_Socket *socket, int pPktID)
    result = readBytesAndVerify(socket, buffer, 2, pPktID);
    if (result < 0) return(result);
 
+   // tell Master PIC to stop monitoring
+	sendPacketViaSerialPortD(RBT_STOP_MONITOR_CMD, 1, 0);
+
    printf("Monitor mode stopped...\n");
 
-   monitorMode = FALSE;  //stop calling of the monitor function
+   return (result);
 
 }//end of handleStopMonitorHostCmd
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// calculateEncoderCountsPerSec
-//
-// Calculates the encoder counts per second. A new counts/sec is
-// calculated base on the counts and elapsed time since the last call to this
-// function.
-//
-
-void calculateEncoderCountsPerSec(long pCountBTemp,
-							long pEnc1Cnt, long pEnc2Cnt,
-							int *pEnc1CntsPerSec, int *pEnc2CntsPerSec)
-{
-
-	double timeCounts;
-	double encCounts;
-
-	//process Encoder 1 values
-
-	//get number of encoder counts since last calculation
-   encCounts = pEnc1Cnt - prevEnc1CntsForCPS;
-   prevEnc1CntsForCPS = pEnc1Cnt;
-
-   //get number of timer B counts since last calculation
-   timeCounts = pCountBTemp - prevEncCPSTmrCnt;
-   prevEncCPSTmrCnt = pCountBTemp;
-
-	//calculate rate based on timer B frequency
-
-   if(timeCounts > 0){
-	   *pEnc1CntsPerSec =
-      					(int)floor((encCounts / timeCounts * TIMERB_FREQ) + 0.5);
-	}else{
-		*pEnc1CntsPerSec = 0;
-   }
-
-   //only allow calibration in the foward direction
-   if (*pEnc1CntsPerSec < 0) {*pEnc1CntsPerSec = 0; }
-
-	//process Encoder 2 values
-
-	//get number of encoder counts since last calculation
-   encCounts = pEnc2Cnt - prevEnc2CntsForCPS;
-   prevEnc2CntsForCPS = pEnc2Cnt;
-
-	//calculate rate based on timer B frequency
-
-   if(timeCounts > 0){
-	   *pEnc2CntsPerSec =
-      				  (int)floor((encCounts / timeCounts * TIMERB_FREQ) + 0.5);
-   }else{
-	   *pEnc2CntsPerSec = 0;
-   }
-
-   //only allow calibration in the foward direction
-   if (*pEnc2CntsPerSec < 0) {*pEnc2CntsPerSec = 0; }
-
-}//end of calculateEncoderCountsPerSec
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// processMonitor
-//
-// Sends to host the status of all inputs when any input changes.
-//
-
-int processMonitor(tcp_Socket *socket)
-{
-
-	//WIP HSS// read in bytes from Master PIC!! //DEBUG HSS//
-
-   int pktSize = 25;
-   char  buffer[25];
-   int x = 0;
-   int pEnc1CntsPerSec = 0, pEnc2CntsPerSec = 0;
-
-   // PLC sends a high to drive the opto isolator - inverted to low to Rabbit
-   //
-   // PLC sends a high during Inspection - Rabbit reads low.
-   // PLC sends a high when Carriage on Pipe - Rabbit reads low.
-   // PLC sends a high when TDC marker is at TDC - Rabbit reads low.
-
-   //check all inputs, send new status if changed from previous state
-
-   //this part makes sure a quick transition gets transmitted to the host
-   //even if the host is requesting periodic updates which might miss the
-   //the event
-
-   //don't send packet for every change in encoder inputs as this would
-   //be too much data - if the encoders are turned slowly enough, the events
-   //can be seen by the host when requesting periodic updates
-
-   if (BitRdPortI(PADR, ENC1A) != prevEnc1A){
-      prevEnc1A = BitRdPortI(PADR, ENC1A);
-      //sendMonitorPacket = TRUE; don't transmit on change - see note above
-   }
-
-   if (BitRdPortI(PADR, ENC1B) != prevEnc1B){
-      prevEnc1B = BitRdPortI(PADR, ENC1B);
-      //sendMonitorPacket = TRUE; don't transmit on change - see note above
-   }
-
-   if (BitRdPortI(PADR, ENC2A) != prevEnc2A){
-      prevEnc2A = BitRdPortI(PADR, ENC2A);
-      //sendMonitorPacket = TRUE; don't transmit on change - see note above
-   }
-
-   if (BitRdPortI(PADR, ENC2B) != prevEnc2B){
-      prevEnc2B = BitRdPortI(PADR, ENC2B);
-      //sendMonitorPacket = TRUE; don't transmit on change - see note above
-   }
-
-   if (BitRdPortI(PADR, UNUSED1) != prevUnused1){
-      prevUnused1 = BitRdPortI(PADR, UNUSED1);
-      sendMonitorPacket = TRUE;
-   }
-
-   if (BitRdPortI(PADR, UNUSED2) != prevUnused2){
-      prevUnused2 = BitRdPortI(PADR, UNUSED2);
-      sendMonitorPacket = TRUE;
-   }
-
-   if (BitRdPortI(PADR, INSPECT) != prevInspect){
-      prevInspect = BitRdPortI(PADR, INSPECT);
-      sendMonitorPacket = TRUE;
-   }
-
-   if (BitRdPortI(PADR, UNUSED3) != prevUnused3){
-      prevUnused3 = BitRdPortI(PADR, UNUSED3);
-      sendMonitorPacket = TRUE;
-   }
-
-   if (BitRdPortI(PEDR, UNUSED4) != prevUnused4){
-      prevUnused4 = BitRdPortI(PBDR, UNUSED4);
-      sendMonitorPacket = TRUE;
-   }
-
-   //read the board's chassis and slot number from PortB which is connected to
-   //the rotary switches on the motherboard
-
-   // slot number is lower nibble of Port B inputs inverted
-   slotAddr = ~(RdPortI(PBDR) | 0xfff0);
-
-   if (slotAddr != prevSlotAddr){
-      prevSlotAddr = slotAddr;
-      sendMonitorPacket = TRUE;
-   }
-
-   // chassis number is upper nibble of Port B inputs inverted
-   chassisAddr = ~((RdPortI(PBDR) >> 4) | 0xfff0 );
-
-   if (chassisAddr != prevChassisAddr){
-      chassisAddr = chassisAddr;
-      sendMonitorPacket = TRUE;
-   }
-
-   if (sendMonitorPacket == TRUE){
-
-      x = 0;
-
-      if (BitRdPortI(PADR, ENC1A)) buffer[x++] = 0;
-      else buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, ENC1B)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, ENC2A)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, ENC2B)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, UNUSED1)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, UNUSED2)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, INSPECT)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PADR, UNUSED3)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PEDR, TDC)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      if (BitRdPortI(PEDR, UNUSED4)) buffer[x++] = 0;
-      else  buffer[x++] = 1;
-
-      buffer[x++] = chassisAddr;
-
-      buffer[x++] = slotAddr;
-
-      buffer[x++] = inspectionStatus;
-
-      buffer[x++] = (rpm >> 8) & 0xff;
-      buffer[x++] = rpm & 0xff;
-
-      buffer[x++] = (rpmVariance >> 8) & 0xff;
-      buffer[x++] = rpmVariance & 0xff;
-
-      // retrieve the encoder count values
-      encAccessFlag = 1; // block the ISR from modifying
-      enc1CntTemp.lVal = encoder1Count; //snag the values to local variables
-      enc2CntTemp.lVal = encoder2Count;
-      encAccessFlag = 0; // unblock the ISR
-
-      //place the encoder 1 values into the buffer by byte, MSB first
-      buffer[x++] = enc1CntTemp.cVal[3];
-      buffer[x++] = enc1CntTemp.cVal[2];
-      buffer[x++] = enc1CntTemp.cVal[1];
-      buffer[x++] = enc1CntTemp.cVal[0];
-
-      //place the encoder 2 values into the buffer by byte, MSB first
-      buffer[x++] = enc2CntTemp.cVal[3];
-      buffer[x++] = enc2CntTemp.cVal[2];
-      buffer[x++] = enc2CntTemp.cVal[1];
-      buffer[x++] = enc2CntTemp.cVal[0];
-
-      //calculate the encoder counts/sec and add to buffer, MSB first
-
-		calculateEncoderCountsPerSec(countBTemp,
-							enc1CntTemp.lVal, enc2CntTemp.lVal,
-							&pEnc1CntsPerSec, &pEnc2CntsPerSec);
-
-      buffer[x++] = (pEnc1CntsPerSec >> 8) & 0xff;
-      buffer[x++] = pEnc1CntsPerSec & 0xff;
-
-      buffer[x++] = (pEnc2CntsPerSec >> 8) & 0xff;
-      buffer[x++] = pEnc2CntsPerSec & 0xff;
-
-      //send the buffer to host
-      sendPacketHeader(socket, GET_MONITOR_PACKET_CMD);
-      sock_flushnext(socket);
-      sock_write(socket,buffer,x);
-
-   }// if (inputChanged == 1)
-
-   sendMonitorPacket = FALSE; //don't update again until change detected
-
-   return(0);
-
-}//end of processMonitor
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -2977,6 +2970,10 @@ int processSerialPortDData(tcp_Socket *pSocket, int pWaitForPkt)
    if (pktSPID == RBT_GET_ALL_LAST_AD_VALUES_CMD){
    	return(handleGetAllLastADValuesPICCmd(pSocket, pktSPLength, pktSPID));
       }
+   else
+   if (pktSPID == RBT_GET_MONITOR_PKT_CMD){
+   	return(handleGetMonitorPacketPICCmd(pSocket, pktSPLength, pktSPID));
+      }
 
    return 0;
 
@@ -3261,9 +3258,6 @@ main()
 
          //process the inspect function if enabled
          if (inspectMode) processInspect(&socket);
-
-         //process the monitor function if enabled
-         if (monitorMode) processMonitor(&socket);
 
       } while(tcp_tick(&socket));
 
