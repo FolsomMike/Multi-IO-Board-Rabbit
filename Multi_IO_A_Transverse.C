@@ -1344,8 +1344,9 @@ void calculateEncoderCountsPerSec(long pCountBTemp,
 int processMonitor(tcp_Socket *pSocket)
 {
 
-   char  buffer[27];
+	char buf1[1], buf2[27];
    int x = 0;
+   int pktIDToHost = GET_MONITOR_PKT_CMD;
    int pEnc1CntsPerSec = 0, pEnc2CntsPerSec = 0;
 
    // PLC sends a high to drive the opto isolator - inverted to low to Rabbit
@@ -1368,50 +1369,50 @@ int processMonitor(tcp_Socket *pSocket)
 
       x = 0;
 
-      if (prevSyncReset) buffer[x++] = 0;
-      else buffer[x++] = 1;
+      if (prevSyncReset) buf2[x++] = 0;
+      else buf2[x++] = 1;
 
-      if (prevSync) buffer[x++] = 0;
-      else buffer[x++] = 1;
+      if (prevSync) buf2[x++] = 0;
+      else buf2[x++] = 1;
 
-      if (prevEnc1A) buffer[x++] = 0;
-      else buffer[x++] = 1;
+      if (prevEnc1A) buf2[x++] = 0;
+      else buf2[x++] = 1;
 
-      if (prevEnc1B) buffer[x++] = 0;
-      else  buffer[x++] = 1;
+      if (prevEnc1B) buf2[x++] = 0;
+      else  buf2[x++] = 1;
 
-      if (prevEnc2A) buffer[x++] = 0;
-      else  buffer[x++] = 1;
+      if (prevEnc2A) buf2[x++] = 0;
+      else  buf2[x++] = 1;
 
-      if (prevEnc2B) buffer[x++] = 0;
-      else  buffer[x++] = 1;
+      if (prevEnc2B) buf2[x++] = 0;
+      else  buf2[x++] = 1;
 
       //filler stuff to match expected number of input bytes (10)
-      buffer[x++] = 0;
-      buffer[x++] = 0;
-		buffer[x++] = 0;
-      buffer[x++] = 0;
+      buf2[x++] = 0;
+      buf2[x++] = 0;
+		buf2[x++] = 0;
+      buf2[x++] = 0;
 
       //DEBUG HSS// temp sending of fake values
 
      	//DEBUG HSS// remove
 
-      buffer[x++] = 0;  //inspection status
-      buffer[x++] = 0;  //rpm uppper
-      buffer[x++] = 0;	//rpm lower
-      buffer[x++] = 0;	//variance upper
-      buffer[x++] = 0;	//variance lower
+      buf2[x++] = 0;  //inspection status
+      buf2[x++] = 0;  //rpm uppper
+      buf2[x++] = 0;	//rpm lower
+      buf2[x++] = 0;	//variance upper
+      buf2[x++] = 0;	//variance lower
 
 		//DEBUG HSS// end remove
 
       //DEBUG HSS// uncomment
-      //buffer[x++] = inspectionStatus;
+      //buf2[x++] = inspectionStatus;
 
-      //buffer[x++] = (rpm >> 8) & 0xff;
-      //buffer[x++] = rpm & 0xff;
+      //buf2[x++] = (rpm >> 8) & 0xff;
+      //buf2[x++] = rpm & 0xff;
 
-      //buffer[x++] = (rpmVariance >> 8) & 0xff;
-      //buffer[x++] = rpmVariance & 0xff;
+      //buf2[x++] = (rpmVariance >> 8) & 0xff;
+      //buf2[x++] = rpmVariance & 0xff;
       //DEBUG HSS// end uncomment
 
       //DEBUG HSS// end temp sending of fake values
@@ -1423,32 +1424,31 @@ int processMonitor(tcp_Socket *pSocket)
       encAccessFlag = 0; // unblock the ISR
 
       //place the encoder 1 values into the buffer by byte, MSB first
-      buffer[x++] = enc1CntTemp.cVal[3];
-      buffer[x++] = enc1CntTemp.cVal[2];
-      buffer[x++] = enc1CntTemp.cVal[1];
-      buffer[x++] = enc1CntTemp.cVal[0];
+      buf2[x++] = enc1CntTemp.cVal[3];
+      buf2[x++] = enc1CntTemp.cVal[2];
+      buf2[x++] = enc1CntTemp.cVal[1];
+      buf2[x++] = enc1CntTemp.cVal[0];
 
       //place the encoder 2 values into the buffer by byte, MSB first
-      buffer[x++] = enc2CntTemp.cVal[3];
-      buffer[x++] = enc2CntTemp.cVal[2];
-      buffer[x++] = enc2CntTemp.cVal[1];
-      buffer[x++] = enc2CntTemp.cVal[0];
+      buf2[x++] = enc2CntTemp.cVal[3];
+      buf2[x++] = enc2CntTemp.cVal[2];
+      buf2[x++] = enc2CntTemp.cVal[1];
+      buf2[x++] = enc2CntTemp.cVal[0];
 
       //calculate the encoder counts/sec and add to buffer, MSB first
 		calculateEncoderCountsPerSec(countBTemp,
 							enc1CntTemp.lVal, enc2CntTemp.lVal,
 							&pEnc1CntsPerSec, &pEnc2CntsPerSec);
 
-      buffer[x++] = (pEnc1CntsPerSec >> 8) & 0xff;
-      buffer[x++] = pEnc1CntsPerSec & 0xff;
+      buf2[x++] = (pEnc1CntsPerSec >> 8) & 0xff;
+      buf2[x++] = pEnc1CntsPerSec & 0xff;
 
-      buffer[x++] = (pEnc2CntsPerSec >> 8) & 0xff;
-      buffer[x++] = pEnc2CntsPerSec & 0xff;
+      buf2[x++] = (pEnc2CntsPerSec >> 8) & 0xff;
+      buf2[x++] = pEnc2CntsPerSec & 0xff;
 
-      //send the buffer to host
-      //DEBUG HSS//sendPacketHeader(pSocket, GET_MONITOR_PKT_CMD);
-      //DEBUG HSS//      sock_flushnext(pSocket); UNNCOMMENT LATER
-            //DEBUG HSS//sock_write(pSocket,buffer,x);
+      //send packet with collected PIC data
+   	sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, 0,
+   											buf1, sizeof(buf2), buf2);
 
    }// if (inputChanged == 1)
 
@@ -1477,11 +1477,10 @@ int handleGetMonitorPacketHostCmd (tcp_Socket *socket, int pPktID)
    if (result < 0) return(result);
 
    //set flag to trigger send
-
-   //DEBUG HSS// uncomment
    sendMonitorPacket = TRUE;
+
+   //request monitor packet via serial
    sendPacketViaSerialPortD(RBT_GET_MONITOR_PKT_CMD, 1, 0);
-	//DEBUG HSS// end uncomment
 
 }//end of handleGetMonitorPacketHostCmd
 //----------------------------------------------------------------------------
@@ -1504,11 +1503,6 @@ int handleGetMonitorPacketPICCmd(
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
 	int pktIDToHost = GET_MONITOR_PKT_CMD;
 
-   //DEBUG HSS// remove later
-   char  buffer[27];
-   int x = 0;
-   //DEBUG HSS// end remove later
-
    waitingForPICResponse = FALSE;
 
    //read in the remainder of the packet
@@ -1518,20 +1512,50 @@ int handleGetMonitorPacketPICCmd(
 
    reSyncCount = 0; pktError = 0; reSyncSPCount = 0; pktSPError = 0;
 
-   //DEBUG HSS// copy code from notepad to here
+   //store values from PIC if they have changed
+	// Bit values in received byte
+	//    0 = SYNC_RESET
+	//    1 = SYNC
+	//    2 = ENC1A
+	//    3 = ENC1B
+	//    4 = ENC2A
+	//    5 = ENC2B
+	//    6 = unused
+	//    7 = unused
 
-   
+   i = 0;
 
-	//DEBUG HSS// remove later //
+   if ((buf2[i] & 0x01) != prevSyncReset) {
+		prevSyncReset = (buf2[i] & 0x01);
+		sendMonitorPacket = TRUE;
+   }
 
-   //fill in all 5s for fake vals for testing
-   for (x=0; x<sizeof(buffer); x++) { buffer[x] = 0; }
+   if ((buf2[i] & 0x02) != prevSync) {
+		prevSync = (buf2[i] & 0x02);
+		sendMonitorPacket = TRUE;
+   }
 
-   //send packet with collected PIC data
-   sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, 0,
-   											buf1, pPktLength-1, buf2);
+	if ((buf2[i] & 0x03) != prevEnc1A) {
+		prevEnc1A = (buf2[i] & 0x03);
+      //sendMonitorPacket = TRUE; don't transmit on change - see note above
+   }
 
-   //DEBUG HSS// end remove later
+	if ((buf2[i] & 0x04) != prevEnc1B){
+      prevEnc1B = (buf2[i] & 0x04);
+      //sendMonitorPacket = TRUE; don't transmit on change - see note above
+   }
+
+	if ((buf2[i] & 0x05) != prevEnc2A){
+      prevEnc2A = (buf2[i] & 0x05);
+      //sendMonitorPacket = TRUE; don't transmit on change - see note above
+   }
+
+	if ((buf2[i] & 0x06) != prevEnc2B){
+      prevEnc2B = (buf2[i] & 0x06);
+      //sendMonitorPacket = TRUE; don't transmit on change - see note above
+   }
+
+	processMonitor(pSocket);
 
    return(result); //return number of bytes read from socket
 
@@ -2913,7 +2937,7 @@ int processSerialPortDData(tcp_Socket *pSocket, int pWaitForPkt)
        ch = serXgetc(SER_PORT_D);
        if (ch != (byte)0xaa) {
 
-		 //DEBUG HSS//printf("num bytes, byte (aa): %d,%02x\n", numBytes, ch );//debug mks
+		 printf("num bytes, byte (aa): %d,%02x\n", numBytes, ch );//debug mks
 
        reSyncSP(); return 0;}
    }
@@ -2922,7 +2946,7 @@ int processSerialPortDData(tcp_Socket *pSocket, int pWaitForPkt)
 	ch = serXgetc(SER_PORT_D);
    if (ch != (byte)0x55) {
 
-		//DEBUG HSS//printf("num bytes, byte(55): %d,%02x\n", numBytes, ch );//debug mks
+		printf("num bytes, byte(55): %d,%02x\n", numBytes, ch );//debug mks
 
    	reSyncSP(); return 0;}
 
