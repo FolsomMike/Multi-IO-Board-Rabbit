@@ -376,7 +376,7 @@ long prevEnc1Cnt, prevEnc2Cnt;
 
 #define GET_INSPECT_PACKET_CMD 14
 #define ZERO_ENCODERS_CMD 15
-#define GET_MONITOR_PACKET_CMD 16
+#define GET_MONITOR_PKT_CMD 16
 #define PULSE_OUTPUT_CMD 17
 #define TURN_ON_OUTPUT_CMD 18
 #define TURN_OFF_OUTPUT_CMD 19
@@ -1446,7 +1446,7 @@ int processMonitor(tcp_Socket *pSocket)
       buffer[x++] = pEnc2CntsPerSec & 0xff;
 
       //send the buffer to host
-      //DEBUG HSS//sendPacketHeader(pSocket, GET_MONITOR_PACKET_CMD);
+      //DEBUG HSS//sendPacketHeader(pSocket, GET_MONITOR_PKT_CMD);
       //DEBUG HSS//      sock_flushnext(pSocket); UNNCOMMENT LATER
             //DEBUG HSS//sock_write(pSocket,buffer,x);
 
@@ -1457,6 +1457,33 @@ int processMonitor(tcp_Socket *pSocket)
    return(0);
 
 }//end of processMonitor
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// handleGetMonitorPacketHostCmd
+//
+// Triggers a Monitor info packet to be sent to host even if no values have
+// been changed.
+//
+
+int handleGetMonitorPacketHostCmd (tcp_Socket *socket, int pPktID)
+{
+
+   int x, result;
+   char buffer[2];
+
+   //read in the remainder of the packet
+   result = readBytesAndVerify(socket, buffer, 2, pPktID);
+   if (result < 0) return(result);
+
+   //set flag to trigger send
+
+   //DEBUG HSS// uncomment
+   sendMonitorPacket = TRUE;
+   sendPacketViaSerialPortD(RBT_GET_MONITOR_PKT_CMD, 1, 0);
+	//DEBUG HSS// end uncomment
+
+}//end of handleGetMonitorPacketHostCmd
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -1475,66 +1502,36 @@ int handleGetMonitorPacketPICCmd(
    int result;
    int debugValue;
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
+	int pktIDToHost = GET_MONITOR_PKT_CMD;
+
+   //DEBUG HSS// remove later
+   char  buffer[27];
+   int x = 0;
+   //DEBUG HSS// end remove later
 
    waitingForPICResponse = FALSE;
 
    //read in the remainder of the packet
 
    result = readBytesAndVerifySP(numBytesInPkt, pPktID, buf2);
-	if (result < numBytesInPkt){
-	   printf("result was bad, did not match bytes expected");//DEBUG HSS//
-    return(result); }
+	if (result < numBytesInPkt){ return(result); }
 
    reSyncCount = 0; pktError = 0; reSyncSPCount = 0; pktSPError = 0;
 
-   //store values from PIC if they have changed
-	// Bit values in received byte
-	//    0 = SYNC_RESET
-	//    1 = SYNC
-	//    2 = ENC1A
-	//    3 = ENC1B
-	//    4 = ENC2A
-	//    5 = ENC2B
-	//    6 = unused
-	//    7 = unused
+   //DEBUG HSS// copy code from notepad to here
 
-   i = 0;
+   
 
-   if ((buf2[i] & 0x01) != prevSyncReset) {
-		prevSyncReset = (buf2[i] & 0x01);
-		sendMonitorPacket = TRUE;
-   }
+	//DEBUG HSS// remove later //
 
-   if ((buf2[i] & 0x02) != prevSync) {
-		prevSync = (buf2[i] & 0x02);
-		sendMonitorPacket = TRUE;
-   }
+   //fill in all 5s for fake vals for testing
+   for (x=0; x<sizeof(buffer); x++) { buffer[x] = 0; }
 
-	if ((buf2[i] & 0x03) != prevEnc1A) {
-		prevEnc1A = (buf2[i] & 0x03);
-      //sendMonitorPacket = TRUE; don't transmit on change - see note above
-   }
+   //send packet with collected PIC data
+   sendPacketOfBuffersViaSocket(pSocket, pktIDToHost, 0,
+   											buf1, pPktLength-1, buf2);
 
-	if ((buf2[i] & 0x04) != prevEnc1B){
-      prevEnc1B = (buf2[i] & 0x04);
-      //sendMonitorPacket = TRUE; don't transmit on change - see note above
-   }
-
-	i++; //increment to next char in buffer
-
-	if ((buf2[i] & 0x05) != prevEnc2A){
-      prevEnc2A = (buf2[i] & 0x05);
-      //sendMonitorPacket = TRUE; don't transmit on change - see note above
-   }
-
-	i++; //increment to next char in buffer
-
-	if ((buf2[i] & 0x06) != prevEnc2B){
-      prevEnc2B = (buf2[i] & 0x06);
-      //sendMonitorPacket = TRUE; don't transmit on change - see note above
-   }
-
-   processMonitor(pSocket);
+   //DEBUG HSS// end remove later
 
    return(result); //return number of bytes read from socket
 
@@ -2129,30 +2126,6 @@ int handleGetInspectPacketHostCmd(tcp_Socket *socket, int pPktID)
    sendInspectPacket(socket);
 
 }//end of handleGetInspectPacketHostCmd
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// handleGetMonitorPacketHostCmd
-//
-// Triggers a Monitor info packet to be sent to host even if no values have
-// been changed.
-//
-
-int handleGetMonitorPacketHostCmd (tcp_Socket *socket, int pPktID)
-{
-
-   int x, result;
-   char buffer[2];
-
-   //read in the remainder of the packet
-   result = readBytesAndVerify(socket, buffer, 2, pPktID);
-   if (result < 0) return(result);
-
-   //set flag to trigger send
-   sendMonitorPacket = TRUE;
-   sendPacketViaSerialPortD(RBT_GET_MONITOR_PKT_CMD, 1, 0);
-
-}//end of handleGetMonitorPacketHostCmd
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
@@ -2846,7 +2819,7 @@ void waitForHostTCPIPConnection(tcp_Socket *socket)
 void reSyncSP()
 {
 
-	int ch, numBytes;
+	int ch, numBytes, count;
 
    reSyncedSP = FALSE;
 
@@ -2861,7 +2834,12 @@ void reSyncSP()
 
    reSyncSPPktID = pktSPID;
 
+   count = 0; //DEBUG HSS// trying to fix no collection of run data causing lock up
    while ((numBytes = serXrdUsed(SER_PORT_D)) > 0) {
+
+   	//break out of while loop if gone through 50 times
+   	if (count++>50) { break; } //DEBUG HSS// trying to fix no collection of run data causing lock up
+
 		ch = serXgetc(SER_PORT_D);
 
 		printf("Serial Port Resync - num bytes, byte: %d,%02x\n", numBytes, ch );//debug mks
@@ -2935,7 +2913,7 @@ int processSerialPortDData(tcp_Socket *pSocket, int pWaitForPkt)
        ch = serXgetc(SER_PORT_D);
        if (ch != (byte)0xaa) {
 
-		 printf("num bytes, byte (aa): %d,%02x\n", numBytes, ch );//debug mks
+		 //DEBUG HSS//printf("num bytes, byte (aa): %d,%02x\n", numBytes, ch );//debug mks
 
        reSyncSP(); return 0;}
    }
@@ -2944,7 +2922,7 @@ int processSerialPortDData(tcp_Socket *pSocket, int pWaitForPkt)
 	ch = serXgetc(SER_PORT_D);
    if (ch != (byte)0x55) {
 
-		 printf("num bytes, byte(55): %d,%02x\n", numBytes, ch );//debug mks
+		//DEBUG HSS//printf("num bytes, byte(55): %d,%02x\n", numBytes, ch );//debug mks
 
    	reSyncSP(); return 0;}
 
@@ -3159,7 +3137,7 @@ int processEthernetData(tcp_Socket *socket, int pWaitForPkt)
    	return handleStopInspectHostCmd(socket, pktID); }
    else
    // force a monitor packet to be sent to the host
-   if (pktID == GET_MONITOR_PACKET_CMD) {
+   if (pktID == GET_MONITOR_PKT_CMD) {
    	return handleGetMonitorPacketHostCmd(socket, pktID); }
 	else
    if (pktID == SET_CONTROL_FLAGS_CMD) {
