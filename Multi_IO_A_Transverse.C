@@ -1460,6 +1460,67 @@ int processMonitor(tcp_Socket *pSocket)
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
+// handleStartMonitorHostCmd
+//
+// Starts the monitor mode.
+//
+
+int handleStartMonitorHostCmd(tcp_Socket *socket, int pPktID)
+{
+
+   int x, result;
+   char buffer[2];
+
+   //read in the remainder of the packet
+   result = readBytesAndVerify(socket, buffer, 2, pPktID);
+   if (result < 0) return(result);
+
+   // PLC sends a high to drive the opto isolator - inverted to low to Rabbit
+   //
+   // PLC sends a high during Inspection - Rabbit reads low.
+   // PLC sends a high when Carriage on Pipe - Rabbit reads low.
+   // PLC sends a high when TDC marker is at TDC - Rabbit reads low.
+
+	// tell Master PIC to start Monitoring
+   sendPacketViaSerialPortD(RBT_START_MONITOR_CMD, 1, 0);
+
+	// force send for first packet
+   sendMonitorPacket = TRUE;
+
+   printf("Monitor mode started...\n");
+
+	return (result);
+
+}//end of handleStartMonitorHostCmd
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
+// handleStopMonitorHostCmd
+//
+// Stops the monitor mode.
+//
+
+int handleStopMonitorHostCmd(tcp_Socket *socket, int pPktID)
+{
+
+   int x, result;
+   char buffer[2];
+
+   //read in the remainder of the packet
+   result = readBytesAndVerify(socket, buffer, 2, pPktID);
+   if (result < 0) return(result);
+
+   // tell Master PIC to stop monitoring
+	sendPacketViaSerialPortD(RBT_STOP_MONITOR_CMD, 1, 0);
+
+   printf("Monitor mode stopped...\n");
+
+   return (result);
+
+}//end of handleStopMonitorHostCmd
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
 // handleGetMonitorPacketHostCmd
 //
 // Triggers a Monitor info packet to be sent to host even if no values have
@@ -2337,64 +2398,6 @@ void countTimerBInts()
 	} //if (output4Timer != 0)
 
 }//end of countTimerBInts
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// handleStartMonitorHostCmd
-//
-// Starts the monitor mode.
-//
-
-int handleStartMonitorHostCmd(tcp_Socket *socket, int pPktID)
-{
-
-   int x, result;
-   char buffer[2];
-
-   //read in the remainder of the packet
-   result = readBytesAndVerify(socket, buffer, 2, pPktID);
-   if (result < 0) return(result);
-
-   // PLC sends a high to drive the opto isolator - inverted to low to Rabbit
-   //
-   // PLC sends a high during Inspection - Rabbit reads low.
-   // PLC sends a high when Carriage on Pipe - Rabbit reads low.
-   // PLC sends a high when TDC marker is at TDC - Rabbit reads low.
-
-	// tell Master PIC to start Monitoring
-   sendPacketViaSerialPortD(RBT_START_MONITOR_CMD, 1, 0);
-
-   printf("Monitor mode started...\n");
-
-	return (result);
-
-}//end of handleStartMonitorHostCmd
-//----------------------------------------------------------------------------
-
-//----------------------------------------------------------------------------
-// handleStopMonitorHostCmd
-//
-// Stops the monitor mode.
-//
-
-int handleStopMonitorHostCmd(tcp_Socket *socket, int pPktID)
-{
-
-   int x, result;
-   char buffer[2];
-
-   //read in the remainder of the packet
-   result = readBytesAndVerify(socket, buffer, 2, pPktID);
-   if (result < 0) return(result);
-
-   // tell Master PIC to stop monitoring
-	sendPacketViaSerialPortD(RBT_STOP_MONITOR_CMD, 1, 0);
-
-   printf("Monitor mode stopped...\n");
-
-   return (result);
-
-}//end of handleStopMonitorHostCmd
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
