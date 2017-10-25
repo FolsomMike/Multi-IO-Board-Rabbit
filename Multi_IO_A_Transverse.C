@@ -1503,6 +1503,8 @@ int handleGetMonitorPacketPICCmd(
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
 	int pktIDToHost = GET_MONITOR_PKT_CMD;
 
+   int debugHss;//DEBUG HSS// remove later // only here so we can monitor value in debug mode
+
    waitingForPICResponse = FALSE;
 
    //read in the remainder of the packet
@@ -1524,6 +1526,8 @@ int handleGetMonitorPacketPICCmd(
 	//    7 = unused
 
    i = 0;
+
+   debugHss = buf2[i];//DEBUG HSS// remove later // only here so we can monitor value in debug mode
 
    if ((buf2[i] & 0x01) != prevSyncReset) {
 		prevSyncReset = (buf2[i] & 0x01);
@@ -2843,7 +2847,7 @@ void waitForHostTCPIPConnection(tcp_Socket *socket)
 void reSyncSP()
 {
 
-	int ch, numBytes, count;
+	int ch, numBytes;
 
    reSyncedSP = FALSE;
 
@@ -2858,11 +2862,7 @@ void reSyncSP()
 
    reSyncSPPktID = pktSPID;
 
-   count = 0; //DEBUG HSS// trying to fix no collection of run data causing lock up
    while ((numBytes = serXrdUsed(SER_PORT_D)) > 0) {
-
-   	//break out of while loop if gone through 50 times
-   	if (count++>50) { break; } //DEBUG HSS// trying to fix no collection of run data causing lock up
 
 		ch = serXgetc(SER_PORT_D);
 
