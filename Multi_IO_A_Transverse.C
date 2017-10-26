@@ -1369,10 +1369,10 @@ int processMonitor(tcp_Socket *pSocket)
 
       x = 0;
 
-      if (prevSyncReset) buf2[x++] = 0;
+      if (prevSync) buf2[x++] = 0;
       else buf2[x++] = 1;
 
-      if (prevSync) buf2[x++] = 0;
+      if (prevSyncReset) buf2[x++] = 0;
       else buf2[x++] = 1;
 
       if (prevEnc1A) buf2[x++] = 0;
@@ -1576,8 +1576,8 @@ int handleGetMonitorPacketPICCmd(
 
    //store values from PIC if they have changed
 	// Bit values in received byte
-	//    0 = SYNC_RESET
-	//    1 = SYNC
+	//    0 = SYNC
+	//    1 = SYNC_RESET
 	//    2 = ENC1A
 	//    3 = ENC1B
 	//    4 = ENC2A
@@ -1587,17 +1587,17 @@ int handleGetMonitorPacketPICCmd(
 
    i = 0;
 
-   //set sync reset if it has changed
+   //set sync if it has changed
 	if ((buf2[i] & 0x01) != 0) { newValue = TRUE; } else { newValue = FALSE; }
-   if (newValue != prevSyncReset) {
-   	prevSyncReset = newValue;
+   if (newValue != prevSync) {
+   	prevSync = newValue;
 		sendMonitorPacket = TRUE;
    }
 
-   //set sync if it has changed
+   //set sync reset if it has changed
 	if ((buf2[i] & 0x02) != 0) { newValue = TRUE; } else { newValue = FALSE; }
-   if (newValue != prevSync) {
-   	prevSync = newValue;
+   if (newValue != prevSyncReset) {
+   	prevSyncReset = newValue;
 		sendMonitorPacket = TRUE;
    }
 
