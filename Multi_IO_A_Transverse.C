@@ -1560,11 +1560,10 @@ int handleGetMonitorPacketPICCmd(
    char buf1[1], buf2[5];
    int i;
    int result;
+   int newValue;
    int debugValue;
    int numBytesInPkt = pPktLength-1; //subtract 1 as command byte already read
 	int pktIDToHost = GET_MONITOR_PKT_CMD;
-
-   int debugHss;//DEBUG HSS// remove later // only here so we can monitor value in debug mode
 
    waitingForPICResponse = FALSE;
 
@@ -1588,35 +1587,45 @@ int handleGetMonitorPacketPICCmd(
 
    i = 0;
 
-   debugHss = buf2[i];//DEBUG HSS// remove later // only here so we can monitor value in debug mode
-
-   if ((buf2[i] & 0x01) != prevSyncReset) {
-		prevSyncReset = (buf2[i] & 0x01);
+   //set sync reset if it has changed
+	if ((buf2[i] & 0x01) != 0) { newValue = TRUE; } else { newValue = FALSE; }
+   if (newValue != prevSyncReset) {
+   	prevSyncReset = newValue;
 		sendMonitorPacket = TRUE;
    }
 
-   if ((buf2[i] & 0x02) != prevSync) {
-		prevSync = (buf2[i] & 0x02);
+   //set sync if it has changed
+	if ((buf2[i] & 0x02) != 0) { newValue = TRUE; } else { newValue = FALSE; }
+   if (newValue != prevSync) {
+   	prevSync = newValue;
 		sendMonitorPacket = TRUE;
    }
 
-	if ((buf2[i] & 0x03) != prevEnc1A) {
-		prevEnc1A = (buf2[i] & 0x03);
+   //set encoder1A if changed
+	if ((buf2[i] & 0x04) != 0) { newValue = TRUE; } else { newValue = FALSE; }
+   if (newValue != prevEnc1A) {
+   	prevEnc1A = newValue;
       //sendMonitorPacket = TRUE; don't transmit on change - see note above
    }
 
-	if ((buf2[i] & 0x04) != prevEnc1B){
-      prevEnc1B = (buf2[i] & 0x04);
+	//set encoder1B if changed
+	if ((buf2[i] & 0x08) != 0) { newValue = TRUE; } else { newValue = FALSE; }
+   if (newValue != prevEnc1B) {
+   	prevEnc1B = newValue;
       //sendMonitorPacket = TRUE; don't transmit on change - see note above
    }
 
-	if ((buf2[i] & 0x05) != prevEnc2A){
-      prevEnc2A = (buf2[i] & 0x05);
+	//set encoder2A if changed
+	if ((buf2[i] & 0x10) != 0) { newValue = TRUE; } else { newValue = FALSE; }
+   if (newValue != prevEnc2A) {
+   	prevEnc2A = newValue;
       //sendMonitorPacket = TRUE; don't transmit on change - see note above
    }
 
-	if ((buf2[i] & 0x06) != prevEnc2B){
-      prevEnc2B = (buf2[i] & 0x06);
+	//set encoder2B if changed
+   if ((buf2[i] & 0x20) != 0) { newValue = TRUE; } else { newValue = FALSE; }
+   if (newValue != prevEnc2B) {
+   	prevEnc2B = newValue;
       //sendMonitorPacket = TRUE; don't transmit on change - see note above
    }
 
@@ -3224,6 +3233,11 @@ main()
    // setup the Timber B interrupt and install the Interrupt Service Routine
    // to track the encoder inputs
    setupTimerBInt();
+
+   //intialize inspect/monitor vars
+   prevSyncReset = FALSE; prevSync = FALSE;
+   prevEnc1A = FALSE; prevEnc1B = FALSE;
+   prevEnc2A = FALSE; prevEnc2B = FALSE;
 
    while(1) {
 
