@@ -1346,11 +1346,10 @@ void calculateEncoderCountsPerSec(long pCountBTemp,
 //easier to use static varibles for the asm code
 static char prevEnc1, prevEnc2;
 
-void calculateEncoderCounts() //WIP HSS// //DEBUG HSS// make universal
+void calculateEncoderCounts()
 {
 
-   //DEBUG HSS// change to nodebug later
-	#asm debug
+	#asm nodebug
 
    //change above to "debug" to set breakpoints in the assembler code
 	//this adds extra code, so jr (jump relative) opcodes may have to be replaced
@@ -1558,6 +1557,10 @@ int processMonitor(tcp_Socket *pSocket)
       //DEBUG HSS// end uncomment
 
       //DEBUG HSS// end temp sending of fake values
+
+      //DEBUG HSS// remove
+      encoder1Count = 205; encoder2Count = 33;
+      //DEBUG HSS// end remove
 
       // retrieve the encoder count values
       encAccessFlag = 1; // block the ISR from modifying
