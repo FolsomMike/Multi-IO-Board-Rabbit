@@ -1336,6 +1336,151 @@ void calculateEncoderCountsPerSec(long pCountBTemp,
 //----------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------
+// calculateEncoderCounts
+//
+// Calculates the encoder counts by combinding the previous A & B values with
+// the new A & B values. Certain combinations mean increment, certain mean
+// decrement, others mean error or noise so do nothing.
+//
+
+//easier to use static varibles for the asm code
+static char prevEnc1, prevEnc2;
+
+void calculateEncoderCounts() //WIP HSS// //DEBUG HSS// make universal
+{
+
+	//DEBUG HSS// only putting in these test values to test assembler code
+   prevEnc1A = 1; prevEnc1B = 0;
+   prevEnc2A = 0; prevEnc2B = 1;
+   //DEBUG HSS// end
+
+   //DEBUG HSS// change to nodebug later
+	#asm debug
+
+   //change above to "debug" to set breakpoints in the assembler code
+	//this adds extra code, so jr (jump relative) opcodes may have to be replaced
+	//with jp (jump absolute) opcodes
+
+	// check for Encoder 1 movement
+
+	   ld    a,(prevEnc1)   ; get the previous encoder A & B values
+		sla	a					; shift up two bits, zeroing lower two bits
+		sla	a
+	   ld    b, a           ; move old value to register b
+
+	   ld 	a,(prevEnc1A)  ; load prevEnc1A
+		sla	a					; shift up one bit, zeroing lower bit
+      or		b					; combine old A & B with new A
+      ld		b, a				; store combined value
+
+	   ld 	a,(prevEnc1B)  ; load prevEnc1B
+      or		b					; combine old A & B & new A with new B
+
+	   ld    (prevEnc1), a  ; store for next time
+
+	   and   0x0f           ; keep only lower nibble with old and new A & B
+
+	   cp    0x02           ; check for all new A & B / old A & B combinations
+	   jp    z, inc1        ;   which indicate forward rotation
+	   cp    0x0b
+	   jp    z, inc1
+	   cp    0x0d
+	   jp    z, inc1
+	   cp    0x04
+	   jp    z, inc1
+
+	   cp    0x01           ; check for all new A & B / old A & B combinations
+	   jp    z, dec1        ;   which indicate reverse rotation
+	   cp    0x07
+	   jp    z, dec1
+	   cp    0x0e
+	   jp    z, dec1
+	   cp    0x08
+	   jp    z, dec1
+
+	   jp    doEnc2         ; all other combinations are illegal or indicate
+	                        ; no movement so do not adjust count
+
+	inc1: ; increment the encoder count
+
+	   ld    jkhl, (encoder1Count)
+	   ld    bcde, 1
+	   add   jkhl,bcde
+	   ld    (encoder1Count), jkhl
+	   jp    doEnc2
+
+	dec1: ; decrement the encoder count
+
+	   ld    jkhl, (encoder1Count)
+	   ld    bcde, 1
+	   sub   jkhl,bcde
+	   ld    (encoder1Count), jkhl
+
+	doEnc2:
+	   // check for Encoder 2 movement
+      ld    a,(prevEnc2)   ; get the previous encoder A & B values
+		sla	a					; shift up two bits, zeroing lower two bits
+		sla	a
+	   ld    b, a           ; move old value to register b
+
+	   ld 	a,(prevEnc2A)  ; load prevEnc2A
+		sla	a					; shift up one bit, zeroing lower bit
+      or		b					; combine old A & B with new A
+      ld		b, a				; store combined value
+
+	   ld 	a,(prevEnc2B)  ; load prevEnc2B
+      or		b					; combine old A & B & new A with new B
+
+	   ld    (prevEnc2), a  ; store for next time
+
+	   and   0x0f           ; keep only lower nibble with old and new A & B
+
+	   cp    0x02           ; check for all new A & B / old A & B combinations
+	   jp    z, inc2        ;   which indicate forward rotation
+	   cp    0x0b
+	   jp    z, inc2
+	   cp    0x0d
+	   jp    z, inc2
+	   cp    0x04
+	   jp    z, inc2
+
+	   cp    0x01           ; check for all new A & B / old A & B combinations
+	   jp    z, dec2        ;   which indicate reverse rotation
+	   cp    0x07
+	   jp    z, dec2
+	   cp    0x0e
+	   jp    z, dec2
+	   cp    0x08
+	   jp    z, dec2
+
+	   jp    done           ; all other combinations are illegal or indicate
+	                        ; no movement so do not adjust count
+
+	inc2: ; increment the encoder count
+
+	   ld    jkhl, (encoder2Count)
+	   ld    bcde, 1
+	   add   jkhl,bcde
+	   ld    (encoder2Count), jkhl
+	   jp    done
+
+	dec2: ; decrement the encoder count
+
+	   ld    jkhl, (encoder2Count)
+	   ld    bcde, 1
+	   sub   jkhl,bcde
+	   ld    (encoder2Count), jkhl
+
+   done: ; do nothing, just a jump to point for illegal combos
+
+   #endasm
+
+   return;
+
+}//end of calculateEncoderCounts
+//----------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------
 // processMonitor
 //
 // Sends to host the status of all inputs when any input changes.
@@ -1348,6 +1493,8 @@ int processMonitor(tcp_Socket *pSocket)
    int x = 0;
    int pktIDToHost = GET_MONITOR_PKT_CMD;
    int pEnc1CntsPerSec = 0, pEnc2CntsPerSec = 0;
+
+   calculateEncoderCounts(); //DEBUG HSS// may not belong here
 
    // PLC sends a high to drive the opto isolator - inverted to low to Rabbit
    //
