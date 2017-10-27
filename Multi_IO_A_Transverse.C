@@ -1349,11 +1349,6 @@ static char prevEnc1, prevEnc2;
 void calculateEncoderCounts() //WIP HSS// //DEBUG HSS// make universal
 {
 
-	//DEBUG HSS// only putting in these test values to test assembler code
-   prevEnc1A = 1; prevEnc1B = 0;
-   prevEnc2A = 0; prevEnc2B = 1;
-   //DEBUG HSS// end
-
    //DEBUG HSS// change to nodebug later
 	#asm debug
 
@@ -1494,7 +1489,7 @@ int processMonitor(tcp_Socket *pSocket)
    int pktIDToHost = GET_MONITOR_PKT_CMD;
    int pEnc1CntsPerSec = 0, pEnc2CntsPerSec = 0;
 
-   calculateEncoderCounts(); //DEBUG HSS// may not belong here
+   calculateEncoderCounts(); //calculate encoder counts
 
    // PLC sends a high to drive the opto isolator - inverted to low to Rabbit
    //
